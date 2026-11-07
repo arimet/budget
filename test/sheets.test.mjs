@@ -198,6 +198,17 @@ const env = (b, name, key) => loadCode(b).readMonth(b.getSheetByName(name)).rows
   assert.equal(nov.value(6, 2), 'Chèque n° 0603045');
 }
 {
+  // The payment mention chosen in the app wins, at creation and when editing.
+  const b = book(), code = loadCode(b), nov = b.getSheetByName('Novembre 2026');
+  const id = code.saveExpense({ date: '2026-11-06', amount: 30, cat: 'Loisirs', sub: 'Sport', label: 'Club', who: ['Foyer'], means: 'Chèque n° 1234' }).saved;
+  const row = () => code.readMonth(nov).rows.find((r) => r.id === id);
+  assert.equal(row().means, 'Chèque n° 1234');
+  code.saveExpense({ id, date: '2026-11-06', amount: 30, cat: 'Loisirs', sub: 'Sport', label: 'Club', who: ['Foyer'], means: 'CB du 06/11' });
+  assert.equal(row().means, 'CB du 06/11');
+  code.saveExpense({ id, date: '2026-11-06', amount: 30, cat: 'Loisirs', sub: 'Sport', label: 'Club', who: ['Foyer'], means: '' });
+  assert.equal(row().means, '');
+}
+{
   // I2: rows typed by hand past row 100, or inserted mid-tab, are in the balance and the next report after an open.
   const b = book(), code = loadCode(b), nov = b.getSheetByName('Novembre 2026');
   code.prepareMonth('2026-12');

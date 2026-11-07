@@ -22,7 +22,7 @@ export var Calc = (function () {
   function notSpending(r) { return r.cat === 'Revenus' || r.sub === 'Virements internes'; }
   function signed(r) { return r.debit - r.credit; }
   function asExpense(ym) {
-    return function (r) { return { id: r.id, ym: ym, date: r.date, amount: signed(r), cat: r.cat, sub: r.sub, label: r.label, who: r.who }; };
+    return function (r) { return { id: r.id, ym: ym, date: r.date, amount: signed(r), cat: r.cat, sub: r.sub, label: r.label, who: r.who, means: r.means }; };
   }
   function tab(data, ym) { return data.months.filter(function (m) { return m.ym === ym; })[0] || null; }
 
@@ -50,6 +50,25 @@ export var Calc = (function () {
       spent: real.filter(function (r) { return !notSpending(r); }).reduce(function (s, r) { return s + signed(r); }, 0),
       upcoming: -net(forecasts), forecasts: forecasts, envelopes: envelopes, expenses: real.map(asExpense(ym))
     };
+  }
+
+  // Balance day by day: the running balance of real lines up to today (all of a past month), then for the current
+  // month a straight line to the expected end of month (forecasts have no day, so no finer projection).
+  function balanceCurve(data, ym, today) {
+    var m = month(data, ym);
+    if (!m) return null;
+    var dim = daysIn(ym), cur = today.slice(0, 7), last = ym < cur ? dim : ym > cur ? 1 : +today.slice(8, 10);
+    var byDay = {};
+    tab(data, ym).rows.forEach(function (r) {
+      if (r.forecast) return;
+      var d = r.date ? +r.date.slice(8, 10) : 1;
+      byDay[d] = (byDay[d] || 0) + r.credit - r.debit;
+    });
+    var points = [], v = m.opening;
+    for (var d = 1; d <= last; d++) { v += byDay[d] || 0; points.push({ d: d, v: v }); }
+    if (ym === cur) points[points.length - 1].v = m.balanceToday; // lines dated later than today are already in the balance
+    var projection = ym >= cur && last < dim ? [{ d: last, v: points[points.length - 1].v }, { d: dim, v: m.endOfMonth }] : [];
+    return { dim: dim, today: ym === cur ? last : null, points: points, projection: projection, end: m.endOfMonth, endWithoutIncome: m.endWithoutIncome };
   }
 
   // ---------------------------------------------------------- budgets (one envelope per category or sub-category)
@@ -185,7 +204,7 @@ export var Calc = (function () {
     return out;
   }
 
-  return { daysIn: daysIn, addMonths: addMonths, periodMonths: periodMonths, expenses: expenses, month: month, plan: plan,
+  return { daysIn: daysIn, addMonths: addMonths, periodMonths: periodMonths, expenses: expenses, month: month, balanceCurve: balanceCurve, plan: plan,
     shares: shares, dashboard: dashboard, evolution: evolution, catSlots: catSlots, suggest: suggest, topSubs: topSubs,
     catOrder: catOrder, norm: norm };
 })();

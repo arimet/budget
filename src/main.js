@@ -173,7 +173,7 @@ function toast(msg, opts) {
 }
 
 // ------------------------------------------------------------ rendering
-var VIEWS = { add: viewAdd, month: viewMonth, plan: viewPlan, insights: viewInsights, dash: viewDash };
+var VIEWS = { add: viewAdd, month: viewMonth, insights: viewInsights, dash: viewDash, savings: viewSavings };
 
 function render(fromData) {
   document.body.classList.toggle('adding', S.tab === 'add');
@@ -197,7 +197,7 @@ function rowHtml(e, withDate) {
 }
 
 // ------------------------------------------------------------ add / edit
-function newForm() { return { id: null, cat: '', sub: '', suggested: false, manual: false, who: [S.data.people[0]] }; }
+function newForm() { return { id: null, cat: '', sub: '', suggested: false, manual: false, who: [S.data.people[0]], means: { kind: 'cb', raw: '' } }; }
 
 function viewAdd() {
   var e = S.edit;
@@ -210,16 +210,40 @@ function viewAdd() {
     '<div class="field"><label class="l" for="label">Libellé <span>facultatif</span></label>' +
     '<input id="label" class="input" list="labels" enterkeyhint="done" autocomplete="off" placeholder="Carrefour, pharmacie…" value="' + (e ? esc(e.label) : '') + '">' +
     '<datalist id="labels"></datalist></div>' +
-    '<div class="field"><span class="l">Catégorie <em id="sugg"></em></span><button type="button" class="catbtn" id="catbtn" data-action="pick"></button>' +
-    '<div class="pills scroller" id="quick"></div></div>' +
+    '<div class="field"><span class="l">Catégorie <em id="sugg"></em></span><button type="button" class="catbtn" id="catbtn" data-action="pick"></button></div>' +
     '<div class="field"><span class="l">Pour <span id="sharehint"></span></span><div class="pills" id="who"></div></div>' +
-    '<div class="field"><label class="l" for="date">Date</label><input type="date" id="date" class="input" value="' + (e ? e.date : today()) + '"></div>' +
+    '<div class="two"><div class="field"><label class="l" for="date">Date</label><input type="date" id="date" class="input" value="' + (e ? e.date : today()) + '"></div>' +
+    '<div class="field"><span class="l">Paiement</span><div id="means"></div></div></div>' +
     '<div class="actions"><button class="btn primary" id="submit">' + (e ? 'Enregistrer' : 'Ajouter') + '</button>' +
     (e ? '<button type="button" class="btn danger" data-action="delete">Supprimer</button>' : '') + '</div></form>' +
     (e ? '' : '<section class="field"><h2>Dernières dépenses</h2><div class="well" id="recent"></div></section>');
 }
 
-function paintAdd() { paintCat(); paintQuick(); paintWho(); paintLists(); }
+function paintAdd() { paintCat(); paintWho(); paintMeans(); paintLists(); }
+
+// "CB / Chèque" column: CB (dated "CB du jj/mm"), a cheque (number optional), nothing, or the text already there.
+function meansOf(text) {
+  if (!text) return { kind: 'none', raw: '' };
+  if (/^CB\b/.test(text)) return { kind: 'cb', raw: '' };
+  var m = text.match(/^Ch[eè]que(?:\s+n°\s*(.*))?$/i);
+  if (m) return { kind: 'cheque', number: m[1] || '', raw: '' };
+  return { kind: 'keep', raw: text };
+}
+function meansText(f, date) {
+  var d = (date || today()).split('-');
+  if (f.means.kind === 'cb') return 'CB du ' + d[2] + '/' + d[1];
+  if (f.means.kind === 'cheque') return 'Chèque' + (f.means.number ? ' n° ' + f.means.number : '');
+  if (f.means.kind === 'keep') return f.means.raw;
+  return '';
+}
+function paintMeans() {
+  var f = S.form, opts = [['cb', 'CB'], ['cheque', 'Chèque'], ['none', 'Aucun']];
+  if (f.means.raw) opts.unshift(['keep', f.means.raw]);
+  $('#means').innerHTML = '<div class="seg wide">' + opts.map(function (o) {
+    return '<button type="button" data-action="means" data-kind="' + o[0] + '" aria-pressed="' + (f.means.kind === o[0]) + '">' + esc(o[1]) + '</button>';
+  }).join('') + '</div>' + (f.means.kind === 'cheque' ? '<input id="chequeno" class="input chequeno" inputmode="numeric" autocomplete="off" placeholder="N° du chèque (facultatif)" value="' +
+    esc(f.means.number || '') + '">' : '');
+}
 
 function paintCat() {
   var f = S.form, b = $('#catbtn');
@@ -229,14 +253,6 @@ function paintCat() {
     ? '<span class="emo">' + emojiOf(f.cat, f.sub) + '</span><span>' + esc(f.sub || f.cat) + '<small>' + esc(f.cat) + '</small></span>'
     : '<span class="emo">' + icon('plus') + '</span><span>Choisir une catégorie</span>';
   $('#sugg').textContent = f.suggested ? 'suggérée' : '';
-}
-
-function paintQuick() {
-  var f = S.form;
-  $('#quick').innerHTML = Calc.topSubs(S.data, 6, today()).map(function (c) {
-    return '<button type="button" class="pill" data-action="quick" data-cat="' + esc(c.cat) + '" data-sub="' + esc(c.sub) + '" aria-pressed="' +
-      (f.cat === c.cat && f.sub === c.sub) + '">' + ico(c.cat, c.sub) + esc(c.sub || c.cat) + '</button>';
-  }).join('');
 }
 
 function paintWho() {
@@ -275,7 +291,7 @@ function sortedExpenses() {
 
 function setCat(cat, sub, manual) {
   S.form.cat = cat; S.form.sub = sub; S.form.manual = manual; S.form.suggested = !manual && !!cat;
-  paintCat(); paintQuick();
+  paintCat();
 }
 
 document.addEventListener('input', function (ev) {
@@ -297,7 +313,8 @@ document.addEventListener('submit', function (ev) {
   var f = S.form, amount = dec($('#amount').value);
   if (!isFinite(amount) || amount === 0) { $('#amountbox').setAttribute('aria-invalid', 'true'); $('#amount').focus(); return; }
   if (!f.cat) { $('#catbtn').classList.add('bad'); openPicker(); return; }
-  var payload = { id: f.id, date: $('#date').value || today(), amount: amount, cat: f.cat, sub: f.sub,
+  if ($('#chequeno')) f.means.number = $('#chequeno').value.trim();
+  var payload = { id: f.id, date: $('#date').value || today(), amount: amount, cat: f.cat, sub: f.sub, means: meansText(f, $('#date').value),
     label: $('#label').value.trim(), who: f.who };
   var btn = $('#submit');
   btn.disabled = true;
@@ -371,50 +388,137 @@ function viewMonth() {
     (past ? '' : tile('Fin de mois prévue', m.endOfMonth, 'après tout ce qui est à venir')) +
     (past || !incomeToCome ? '' : tile('Sans les salaires', m.endWithoutIncome, 'si les ' + money0(incomeToCome) + ' à recevoir n\'arrivaient pas')) +
     tile('Dépensé', m.spent, '') + '</div>';
-  out += upcomingHtml(m);
-  var days = {};
-  m.expenses.forEach(function (e) { (days[e.date] = days[e.date] || []).push(e); });
-  var keys = Object.keys(days).sort().reverse();
-  out += '<section class="field"><h2>Opérations du mois</h2><div class="well">' + (keys.length ? keys.map(function (k) {
-    var total = days[k].reduce(function (s, e) { return s + e.amount; }, 0);
-    return '<div class="day"><span>' + (k ? dayName(k) : 'Sans date') + '</span><span class="num">' + money(total) + '</span></div>' +
-      days[k].map(function (e) { return rowHtml(e, false); }).join('');
-  }).join('') : '<p class="empty">Aucune opération ce mois-ci.</p>') + '</div></section>' +
-    '<label class="btn importbtn">' + icon('upload') + 'Importer le relevé de la banque<input type="file" id="bankfile" accept=".csv,text/csv" hidden></label>' + installHtml();
-  var trash = S.data.trash.filter(function (t) { return t.tab === tabLabel(S.ym); });
-  if (trash.length) {
-    out += '<section class="field"><h2>Supprimées</h2><ul class="well">' + trash.map(function (t) {
-      return '<li class="row static"><span class="emo">' + emojiOf(t.cat, t.sub) + '</span><span class="txt"><b>' + esc(t.label) + '</b><small>' +
-        (t.date ? shortDate(t.date) + ' · ' : '') + money(Math.abs(t.amount)) + '</small></span>' +
-        '<button type="button" class="pill passbtn" data-action="restore" data-id="' + esc(t.id) + '">Récupérer</button></li>';
-    }).join('') + '</ul></section>';
-  }
-  return out;
-}
 
-function tabLabel(ym) { return monthName(ym); }
+  var curve = Calc.balanceCurve(S.data, S.ym, today());
+  out += acc('curve', 'Évolution du solde', curve.projection.length ? 'fin prévue ' + money0(curve.end) : 'fin ' + money0(curve.end), balanceChart(curve));
 
-// The bold lines of the month: what is still to go out or come in, and what is left to spend in each budget.
-function upcomingHtml(m) {
-  if (!m.forecasts.length && !m.envelopes.length) return '';
-  var out = '';
   if (m.forecasts.length) {
     var debit = m.forecasts.reduce(function (s, r) { return s + r.debit; }, 0);
     var credit = m.forecasts.reduce(function (s, r) { return s + r.credit; }, 0);
-    out += '<section class="field"><div class="head"><h2>À venir</h2><span class="hint">' + money0(debit) + ' à sortir' +
-      (credit ? ' · ' + money0(credit) + ' à recevoir' : '') + '</span></div><ul class="well">' + m.forecasts.map(forecastRow).join('') + '</ul></section>';
+    out += acc('upcoming', 'À venir', money0(debit) + ' à sortir' + (credit ? ' · ' + money0(credit) + ' à recevoir' : ''),
+      '<ul class="well">' + m.forecasts.map(forecastRow).join('') + '</ul>');
   }
+  var plan = Calc.plan(S.data, S.ym);
   if (m.envelopes.length) {
-    var plan = Calc.plan(S.data, S.ym), left = m.envelopes.reduce(function (s, r) { return s + r.debit; }, 0);
-    out += '<section class="card"><div class="head"><h2>Reste à dépenser</h2><span class="hint">' + money0(left) + ' sur les budgets du mois</span></div>' +
-      '<ul class="bars">' + m.envelopes.map(function (r) {
-        var b = plan.budgeted.filter(function (x) { return 'env:' + x.cat + '|' + x.sub === r.id; })[0] || { actual: 0, budget: r.debit, items: [] };
-        return barHtml('up:' + r.id, ico(r.cat, r.sub) + esc(r.label), b.actual, b.budget,
-          { right: 'reste ' + money0(r.debit), below: money0(b.actual) + ' dépensés sur un budget de ' + money0(b.budget) }, lines(b.items), b.actual > b.budget);
-      }).join('') + '</ul></section>';
+    var left = m.envelopes.reduce(function (s, r) { return s + r.debit; }, 0);
+    out += acc('left', 'Reste à dépenser', money0(left) + ' sur les budgets', '<ul class="bars">' + m.envelopes.map(function (r) {
+      var b = plan.budgeted.filter(function (x) { return 'env:' + x.cat + '|' + x.sub === r.id; })[0] || { actual: 0, budget: r.debit, items: [] };
+      return barHtml('up:' + r.id, ico(r.cat, r.sub) + esc(r.label), b.actual, b.budget,
+        { right: 'reste ' + money0(r.debit), below: money0(b.actual) + ' dépensés sur un budget de ' + money0(b.budget) }, lines(b.items), b.actual > b.budget);
+    }).join('') + '</ul>');
+  }
+  out += acc('plan', 'Prévu / réel', money0(plan.actualTotal) + ' dépensés · ' + money0(plan.budgetTotal) + ' de budgets', planBody(plan));
+
+  var days = {};
+  m.expenses.forEach(function (e) { (days[e.date] = days[e.date] || []).push(e); });
+  var keys = Object.keys(days).sort().reverse();
+  out += acc('ops', 'Opérations du mois', m.expenses.length + ' ligne' + (m.expenses.length > 1 ? 's' : ''), '<div class="well">' + (keys.length ? keys.map(function (k) {
+    var total = days[k].reduce(function (s, e) { return s + e.amount; }, 0);
+    return '<div class="day"><span>' + (k ? dayName(k) : 'Sans date') + '</span><span class="num">' + money(total) + '</span></div>' +
+      days[k].map(function (e) { return rowHtml(e, false); }).join('');
+  }).join('') : '<p class="empty">Aucune opération ce mois-ci.</p>') + '</div>');
+
+  var trash = S.data.trash.filter(function (t) { return t.tab === tabLabel(S.ym); });
+  if (trash.length) {
+    out += acc('trash', 'Supprimées', trash.length + ' à récupérer', '<ul class="well">' + trash.map(function (t) {
+      return '<li class="row static"><span class="emo">' + emojiOf(t.cat, t.sub) + '</span><span class="txt"><b>' + esc(t.label) + '</b><small>' +
+        (t.date ? shortDate(t.date) + ' · ' : '') + money(Math.abs(t.amount)) + '</small></span>' +
+        '<button type="button" class="pill passbtn" data-action="restore" data-id="' + esc(t.id) + '">Récupérer</button></li>';
+    }).join('') + '</ul>');
+  }
+  return out + '<label class="btn importbtn">' + icon('upload') + 'Importer le relevé de la banque<input type="file" id="bankfile" accept=".csv,text/csv" hidden></label>' + installHtml();
+}
+
+// ------------------------------------------------------------ balance chart: real line to today, dashed projection to month end
+var CH = { w: 640, h: 200, l: 52, r: 14, t: 14, b: 26 };
+function balanceChart(c) {
+  // Drawn at the size it is shown, so the axis labels stay readable on a phone.
+  CH.w = Math.max(320, Math.min(640, view.clientWidth - 40)); CH.h = CH.w < 500 ? 190 : 210;
+  var all = c.points.concat(c.projection), vals = all.map(function (p) { return p.v; });
+  var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+  if (lo > 0 && lo < hi * 0.25) lo = 0; // anchor at zero when it is close anyway
+  var pad = (hi - lo) * 0.12 || 50; lo -= pad; hi += pad;
+  var x = function (d) { return CH.l + (d - 1) / Math.max(1, c.dim - 1) * (CH.w - CH.l - CH.r); };
+  var y = function (v) { return CH.t + (hi - v) / (hi - lo) * (CH.h - CH.t - CH.b); };
+  var path = function (pts) { return pts.map(function (p, i) { return (i ? 'L' : 'M') + x(p.d).toFixed(1) + ' ' + y(p.v).toFixed(1); }).join(''); };
+  var ticks = [hi - pad, (hi + lo) / 2, lo + pad].map(function (v) { return Math.round(v / 10) * 10; });
+  var grid = ticks.map(function (v) {
+    return '<line class="grid" x1="' + CH.l + '" x2="' + (CH.w - CH.r) + '" y1="' + y(v) + '" y2="' + y(v) + '"/>' +
+      '<text class="axis" x="' + (CH.l - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + money0(v) + '</text>';
+  }).join('');
+  var zero = lo < 0 && hi > 0 ? '<line class="zero" x1="' + CH.l + '" x2="' + (CH.w - CH.r) + '" y1="' + y(0) + '" y2="' + y(0) + '"/>' : '';
+  var days = [1, 10, 20, c.dim].map(function (d) { return '<text class="axis" x="' + x(d) + '" y="' + (CH.h - 6) + '" text-anchor="middle">' + d + '</text>'; }).join('');
+  var lastReal = c.points[c.points.length - 1], end = c.projection[1];
+  var marks = (c.today ? '<circle class="dot" cx="' + x(lastReal.d) + '" cy="' + y(lastReal.v) + '" r="5"/>' : '') +
+    (end ? '<circle class="dot hollow" cx="' + x(end.d) + '" cy="' + y(end.v) + '" r="5"/>' : '');
+  var data = c.points.map(function (p) { return [p.d, Math.round(p.v), 0]; }).concat(end ? [[end.d, Math.round(end.v), 1]] : []);
+  return '<figure class="chart" data-points="' + esc(JSON.stringify(data)) + '" data-ym="' + S.ym + '">' +
+    '<svg viewBox="0 0 ' + CH.w + ' ' + CH.h + '" role="img" aria-label="Solde du compte jour par jour' + (end ? ', puis projection jusqu\'à la fin du mois' : '') + '">' +
+    grid + zero + days + '<path class="line" d="' + path(c.points) + '"/>' + (end ? '<path class="line proj" d="' + path(c.projection) + '"/>' : '') + marks +
+    '<line class="cross" y1="' + CH.t + '" y2="' + (CH.h - CH.b) + '" hidden/><rect class="hit" x="' + CH.l + '" y="0" width="' + (CH.w - CH.l - CH.r) + '" height="' + CH.h + '"/></svg>' +
+    '<figcaption>' + (c.today ? '<span class="k"><i class="sw"></i>solde réel</span>' : '') + (end ? '<span class="k"><i class="sw dash"></i>projection avec ce qui est à venir</span>' : '') +
+    '</figcaption><div class="tip" hidden></div></figure>';
+}
+// Crosshair and tooltip: nearest day under the pointer.
+document.addEventListener('pointermove', function (ev) {
+  var fig = ev.target.closest && ev.target.closest('.chart');
+  if (!fig) return;
+  var svg = fig.querySelector('svg'), box = svg.getBoundingClientRect(), pts = JSON.parse(fig.dataset.points);
+  var dim = Calc.daysIn(fig.dataset.ym), px = (ev.clientX - box.left) / box.width * CH.w;
+  var d = Math.round((px - CH.l) / (CH.w - CH.l - CH.r) * (dim - 1) + 1);
+  var p = pts.reduce(function (best, q) { return Math.abs(q[0] - d) < Math.abs(best[0] - d) ? q : best; }, pts[0]);
+  var xpx = CH.l + (p[0] - 1) / Math.max(1, dim - 1) * (CH.w - CH.l - CH.r);
+  var cross = fig.querySelector('.cross'), tip = fig.querySelector('.tip');
+  cross.removeAttribute('hidden'); cross.setAttribute('x1', xpx); cross.setAttribute('x2', xpx);
+  tip.hidden = false;
+  tip.innerHTML = '<b>' + money0(p[1]) + '</b><span>' + (p[2] ? 'fin du mois prévue' : 'le ' + p[0] + ' ' + shortMonth(fig.dataset.ym)) + '</span>';
+  tip.style.left = Math.min(box.width - 120, Math.max(0, xpx / CH.w * box.width - 60)) + 'px';
+});
+document.addEventListener('pointerleave', function (ev) {
+  if (!ev.target.classList || !ev.target.classList.contains('chart')) return;
+  ev.target.querySelector('.tip').hidden = true; ev.target.querySelector('.cross').setAttribute('hidden', '');
+}, true);
+
+// Sections of the month that fold; what is open is remembered on the device.
+var ACC_DEFAULT = { curve: true, upcoming: true, left: true, plan: false, ops: true, trash: false };
+function accState() {
+  if (!S.acc) try { S.acc = JSON.parse(localStorage.getItem('budget-acc') || '{}'); } catch (e) { S.acc = {}; }
+  return S.acc;
+}
+function acc(key, title, hint, body) {
+  var open = key in accState() ? accState()[key] : ACC_DEFAULT[key];
+  return '<details class="acc" data-acc="' + key + '"' + (open ? ' open' : '') + '><summary><span class="acc-t">' + esc(title) + '</span>' +
+    '<span class="acc-h">' + esc(hint) + '</span>' + icon('next', 'chev') + '</summary><div class="acc-b">' + body + '</div></details>';
+}
+document.addEventListener('toggle', function (ev) {
+  var d = ev.target;
+  if (!d.dataset || !d.dataset.acc) return;
+  accState()[d.dataset.acc] = d.open;
+  try { localStorage.setItem('budget-acc', JSON.stringify(S.acc)); } catch (e) { /* this visit only */ }
+}, true);
+
+// Budgets of the month against what was spent, then what no budget covers.
+function planBody(p) {
+  var out = p.budgeted.length ? '<h3>Budgets</h3><ul class="bars">' + p.budgeted.map(function (r) {
+    var over = r.actual > r.budget;
+    return barHtml('plan:' + r.cat + '|' + r.sub, ico(r.cat, r.sub) + esc(r.label), r.actual, r.budget,
+      { right: money0(r.actual) + ' <small>/ ' + money0(r.budget) + '</small>',
+        below: over ? money0(r.actual - r.budget) + ' de dépassement' : 'reste ' + money0(r.budget - r.actual) }, lines(r.items), over);
+  }).join('') + '</ul>' : '<p class="empty">Aucun budget pour ce mois : ajoute des lignes dans l\'onglet Budgets du Sheets.</p>';
+  if (p.unbudgeted.length) {
+    var max = p.unbudgeted[0].actual;
+    out += '<h3>Hors budget</h3><ul class="bars">' + p.unbudgeted.map(function (r) {
+      return barHtml('plan:' + r.cat, ico(r.cat) + esc(r.cat), r.actual, max, { right: money0(r.actual) }, lines(r.items));
+    }).join('') + '</ul>';
   }
   return out;
 }
+
+function viewSavings() {
+  return topbar('Épargne', '') + (savingsHtml() || '<p class="empty">Aucun onglet « Epargne … » dans le Sheets.</p>');
+}
+
+function tabLabel(ym) { return monthName(ym); }
 
 // Real lines shown when a bar is unfolded.
 function lines(items) {
@@ -439,27 +543,6 @@ function barHtml(key, title, value, max, extra, subs, over) {
     (open && subs.length ? '<ul class="subs">' + subs.map(function (s) {
       return '<li><span>' + esc(s.left) + '</span><span>' + esc(s.right) + '</span></li>';
     }).join('') + '</ul>' : '') + '</li>';
-}
-
-function viewPlan() {
-  var p = Calc.plan(S.data, S.ym);
-  var budgetedActual = p.budgeted.reduce(function (s, r) { return s + r.actual; }, 0);
-  var out = topbar('Prévu / réel') + '<div class="tiles">' +
-    tile('Dépensé sur les budgets', budgetedActual, 'sur ' + money0(p.budgetTotal) + ' prévus', true) +
-    tile('Hors budget', p.actualTotal - budgetedActual, 'prélèvements, santé, loisirs…') + '</div>';
-  out += '<section class="card"><h2>Budgets du mois</h2>' + (p.budgeted.length ? '<ul class="bars">' + p.budgeted.map(function (r) {
-    var over = r.actual > r.budget;
-    return barHtml('plan:' + r.cat + '|' + r.sub, ico(r.cat, r.sub) + esc(r.label), r.actual, r.budget,
-      { right: money0(r.actual) + ' <small>/ ' + money0(r.budget) + '</small>',
-        below: over ? money0(r.actual - r.budget) + ' de dépassement' : 'reste ' + money0(r.budget - r.actual) }, lines(r.items), over);
-  }).join('') + '</ul>' : '<p class="empty">Aucun budget pour ce mois : ajoute des lignes dans l\'onglet Budgets du Sheets.</p>') + '</section>';
-  if (p.unbudgeted.length) {
-    var max = p.unbudgeted[0].actual;
-    out += '<section class="card"><h2>Hors budget</h2><ul class="bars">' + p.unbudgeted.map(function (r) {
-      return barHtml('plan:' + r.cat, ico(r.cat) + esc(r.cat), r.actual, max, { right: money0(r.actual) }, lines(r.items));
-    }).join('') + '</ul></section>';
-  }
-  return out;
 }
 
 // ------------------------------------------------------------ upcoming (the bold lines of the month)
@@ -547,7 +630,6 @@ function viewInsights() {
     return '<li>' + esc(t) + '</li>';
   }).join('') + '</ul></section>';
 
-  out += savingsHtml();
   var cmp = Insights.compare(S.data, ym).filter(function (c) { return Math.max(c.now, c.avg) >= 10; });
   out += '<section class="card"><div class="head"><h2>Par rapport à d\'habitude</h2><span class="hint">moyenne des 3 mois précédents</span></div>' +
     '<ul class="cmp">' + cmp.map(function (c) {
@@ -663,14 +745,18 @@ function viewDash() {
       money0(Math.abs(change)) + '</b><em>' + esc(vs) + ' (' + money0(mv.total.before) + ')</em></div></div>' +
     '<p class="hint">Dépensé = toutes les sorties, prélèvements compris, moins les remboursements. Les salaires et les virements entre vos comptes n\'y sont pas.</p>';
   if (mv.up.length || mv.down.length) {
-    var moverList = function (list, cls) {
-      return list.length ? '<ul class="movers">' + list.slice(0, 5).map(function (r) {
-        return '<li><span>' + ico(r.cat) + esc(r.cat) + '</span><b class="num ' + cls + '">' + (r.delta > 0 ? '+' : '−') + money0(Math.abs(r.delta)) + '</b>' +
+    // Diverging bars around zero: more spent to the right (red), less to the left (violet), the value written beside.
+    var rows = mv.up.slice(0, 5).concat(mv.down.slice(0, 5));
+    var big = Math.max.apply(null, rows.map(function (r) { return Math.abs(r.delta); }));
+    out += '<section class="card"><div class="head"><h2>Ce qui a bougé</h2><span class="hint">' + esc(vs) + '</span></div><ul class="diverge">' +
+      rows.map(function (r) {
+        var up = r.delta > 0, w = Math.max(2, Math.abs(r.delta) / big * 100);
+        return '<li title="' + esc(r.cat + ' : ' + money0(r.avg) + ' → ' + money0(r.now)) + '"><span class="dv-name">' + ico(r.cat) + esc(r.cat) + '</span>' +
+          '<span class="dv-track"><span class="dv-half left">' + (up ? '' : '<i class="dv-bar down" style="width:' + w + '%"></i>') + '</span>' +
+          '<span class="dv-half right">' + (up ? '<i class="dv-bar up" style="width:' + w + '%"></i>' : '') + '</span></span>' +
+          '<b class="num ' + (up ? 'up' : 'down') + '">' + (up ? '+' : '−') + money0(Math.abs(r.delta)) + '</b>' +
           '<small>' + money0(r.avg) + ' → ' + money0(r.now) + '</small></li>';
-      }).join('') + '</ul>' : '<p class="empty">Rien.</p>';
-    };
-    out += '<section class="card"><div class="head"><h2>Ce qui a bougé</h2><span class="hint">' + esc(vs) + '</span></div>' +
-      '<div class="movecols"><div><h3>En hausse</h3>' + moverList(mv.up, 'up') + '</div><div><h3>En baisse</h3>' + moverList(mv.down, 'down') + '</div></div></section>';
+      }).join('') + '</ul><p class="legendline"><span class="k"><i class="sw down"></i>moins dépensé</span><span class="k"><i class="sw up"></i>plus dépensé</span></p></section>';
   }
 
   var maxCat = res.byCat.length ? res.byCat[0].amount : 0;
@@ -743,7 +829,9 @@ document.addEventListener('click', function (ev) {
     case 'pick': openPicker(); break;
     case 'close-sheet': closeSheet(); break;
     case 'choose': setCat(t.dataset.cat, t.dataset.sub, true); closeSheet(); break;
-    case 'quick': setCat(t.dataset.cat, t.dataset.sub, true); break;
+    case 'means':
+      if ($('#chequeno')) f.means.number = $('#chequeno').value.trim();
+      f.means.kind = t.dataset.kind; paintMeans(); if ($('#chequeno')) $('#chequeno').focus(); break;
     case 'who':
       // Toggle, keeping at least one person and the order of the Personnes tab.
       var p = t.dataset.person, on = f.who.indexOf(p) >= 0;
@@ -754,7 +842,7 @@ document.addEventListener('click', function (ev) {
       var e = realRows().filter(function (x) { return x.id === t.dataset.id; })[0];
       if (!e) return;
       S.back = S.tab; S.edit = e; S.tab = 'add';
-      S.form = { id: e.id, cat: e.cat, sub: e.sub, suggested: false, manual: true, who: e.who.slice() };
+      S.form = { id: e.id, cat: e.cat, sub: e.sub, suggested: false, manual: true, who: e.who.slice(), means: meansOf(e.means) };
       render(); window.scrollTo(0, 0); break;
     case 'cancel-edit': exitEdit(); break;
     case 'delete': confirmDelete(); break;

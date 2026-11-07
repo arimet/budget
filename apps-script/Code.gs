@@ -389,9 +389,9 @@ function writeExpense(ss, e) {
   values[COL.who] = e.who.join(', ');
   values[COL.id] = id;
   var at = e.id ? findById(ss, e.id) : null;
-  // An edited line keeps how it was paid ("Chèque n° …", "Retrait …", a direct debit's empty cell); only card lines follow the date.
+  // Without a mention from the app, an edited line keeps how it was paid ("Chèque n° …", "Retrait …", an empty cell); card lines follow the date.
   var oldMeans = at ? str(at.sh.getRange(at.row, COL.means).getValue()) : '';
-  if (at && oldMeans.indexOf('CB') !== 0) values[COL.means] = oldMeans;
+  if (at && typeof e.means !== 'string' && oldMeans.indexOf('CB') !== 0) values[COL.means] = oldMeans; // the app did not say: keep it
   if (at && tabYm(at.sh.getName()) === target && !isBold(at.sh, at.row)) {
     writeCells(at.sh, at.row, values);
   } else {

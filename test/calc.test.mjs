@@ -61,6 +61,16 @@ assert.equal(m.forecasts.length, 2);
 assert.equal(m.envelopes[0].debit, 440);
 assert.equal(m.expenses.length, 6, 'every real row is listed, salaries and transfers included');
 assert.equal(Calc.month(data, '2026-07', '2026-11-07'), null, 'no tab, no month');
+
+// Balance through the month: real line up to today, then a straight projection to the expected end of month.
+const curve = Calc.balanceCurve(data, '2026-11', '2026-11-07');
+assert.equal(curve.dim, 30);
+assert.equal(curve.points.length, 7, 'one point per day up to today');
+assert.equal(curve.points[0].v, 1000, 'day 1: the opening balance');
+assert.equal(round(curve.points[6].v), round(m.balanceToday));
+assert.deepEqual(plain(curve.projection.map((p) => [p.d, round(p.v)])), [[7, round(m.balanceToday)], [30, round(m.endOfMonth)]]);
+assert.equal(Calc.balanceCurve(data, '2026-10', '2026-11-07').projection.length, 0, 'a past month has no projection');
+assert.equal(Calc.balanceCurve(data, '2026-10', '2026-11-07').points.length, 31);
 function round(x) { return Math.round(x * 100) / 100; }
 
 // planned vs spent: envelope budgets per category or sub-category, latest "since" not after the month
