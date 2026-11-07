@@ -88,6 +88,8 @@ export class Book {
   insertSheet(name) { const s = new Sheet(this, name); this.sheets.push(s); return s; }
   deleteSheet(s) { this.sheets.splice(this.sheets.indexOf(s), 1); }
   getSpreadsheetTimeZone() { return 'Europe/Paris'; }
+  getEditors() { return (this.editors || []).map((e) => ({ getEmail: () => e })); }
+  getOwner() { return { getEmail: () => this.owner || '' }; }
   setActiveSheet(s) { this.active = s; return s; }
   moveActiveSheet(pos) { this.sheets.splice(this.sheets.indexOf(this.active), 1); this.sheets.splice(pos - 1, 0, this.active); }
   // Test helper: a sheet from rows of values; a value starting with '**' is written bold.
@@ -107,6 +109,7 @@ const pad = (x) => ('0' + x).slice(-2);
 // Runs the source of Code.gs against a Book, with "today" pinned. Returns the script's global functions.
 export function loadCodeFrom(src, book, today) {
   let uuid = 0;
+  const props = {}, cache = {};
   const globals = {
     SpreadsheetApp: {
       getActive: () => book, getUi: () => ({}), flush: () => {},
@@ -116,12 +119,25 @@ export function loadCodeFrom(src, book, today) {
     },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
-      getUuid: () => ('0000000' + (++uuid).toString(16)).slice(-8) + '-x',
+      getUuid: () => ('0000000' + (++uuid).toString(16)).slice(-8) + '-0000-4000-8000-' + ('00000000000' + (uuid * 7919).toString(16)).slice(-12),
+      // Not SHA-256: a stable stand-in so the password checks run under node and in the browser preview.
+      computeDigest: (alg, text) => Array.from(String(text)).map((c, i) => (c.charCodeAt(0) * 31 + i) % 256),
+      base64Encode: (bytes) => bytes.join('.'),
+      sleep: () => {},
+      DigestAlgorithm: { SHA_256: 'sha256' }, Charset: { UTF_8: 'utf8' },
       formatDate: (d, tz, f) => f.replace('yyyy', d.getFullYear()).replace('MM', pad(d.getMonth() + 1)).replace('dd', pad(d.getDate()))
     },
-    PropertiesService: { getScriptProperties: () => ({ getProperty: () => null }) }
+    PropertiesService: { getScriptProperties: () => ({
+      getProperty: (k) => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = String(v); }, deleteProperty: (k) => { delete props[k]; } }) },
+    ContentService: { MimeType: { JSON: 'json' }, createTextOutput: (t) => ({ text: t, setMimeType() { return this; } }) },
+    // Google's tokeninfo endpoint: the test registers which ID tokens exist (book.idTokens) and what they say.
+    UrlFetchApp: { fetch: (url) => {
+      const t = decodeURIComponent(url.split('id_token=')[1] || ''), info = (book.idTokens || {})[t];
+      return { getResponseCode: () => (info ? 200 : 400), getContentText: () => JSON.stringify(info || { error: 'invalid_token' }) };
+    } },
+    CacheService: { getScriptCache: () => ({ get: (k) => cache[k] || null, put: (k, v) => { cache[k] = v; } }) }
   };
-  const names = [...src.matchAll(/^function (\w+)/gm)].map((m) => m[1]).concat(['TABS', 'MONTHS_FR']);
-  const body = src + `\nnow = function () { return new Date(${JSON.stringify(today + 'T12:00:00')}); };\nreturn { ${names.join(', ')} };`;
+  const names = [...src.matchAll(/^function (\w+)/gm)].map((m) => m[1]).concat(['TABS', 'MONTHS_FR', 'GOOGLE_CLIENT_ID']);
+  const body = src + `\nnow = function () { return new Date(${JSON.stringify(today + 'T12:00:00')}); };\nnowMs = function () { return Date.now() + (globalThis.__clock || 0); };\nreturn { ${names.join(', ')} };`;
   return new Function(...Object.keys(globals), body)(...Object.values(globals));
 }

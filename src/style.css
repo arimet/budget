@@ -93,6 +93,7 @@ body.locked main{padding-bottom:40px}
 .pwbox input::placeholder{color:var(--muted)}
 .gate-err{min-height:1.5em;font-size:14px !important;font-weight:600;color:var(--danger-text) !important}
 .gate .btn{width:100%}
+.gbtn{display:flex;justify-content:center;min-height:44px;width:100%;margin-top:8px}
 
 /* ------------------------------------------------------------ shared pieces */
 .head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}

@@ -66,10 +66,12 @@ const d = now.getDate();
 const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpense: code.deleteExpense, restoreExpense: code.restoreExpense,
   markPassed: code.markPassed, prepareMonth: code.prepareMonth, importBank: code.importBank };
 
-// Password for the preview: "budget".
-export function mockCall(pw, fn, args) {
+// Google sign-in in the preview: the fake button sends "mock", exchanged for a session key like on the real server.
+const MOCK_TOKEN = 'mock-session-key-0000000000000000';
+export function mockCall(body) {
   return new Promise((ok) => setTimeout(() => {
-    if (pw !== 'budget') return ok({ error: 'auth' });
-    try { ok({ data: JSON.parse(JSON.stringify(api[fn](...args))) }); } catch (e) { ok({ error: e.message }); }
+    if (body.fn === 'googleLogin') return ok(body.credential === 'mock' ? { data: { token: MOCK_TOKEN, email: 'alex@example.com' } } : { error: 'auth' });
+    if (body.token !== MOCK_TOKEN) return ok({ error: 'auth' });
+    try { ok({ data: JSON.parse(JSON.stringify(api[body.fn](...body.args))) }); } catch (e) { ok({ error: e.message }); }
   }, 300));
 }

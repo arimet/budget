@@ -6,9 +6,11 @@ import { Bank } from './bank.js';
 
 // The Apps Script web app bound to the spreadsheet (apps-script/Code.gs, doPost).
 var API_URL = 'https://script.google.com/macros/s/AKfycbxyr6VEJfNQ8ldL1vnc-MEFV6bQ4dYZ1qvTyeCMC5_x1lbwmCcbs2M36ITvcrTUSF0/exec';
-var PW_KEY = 'budget-pw';
+var TOKEN_KEY = 'budget-token', OLD_PW_KEY = 'budget-pw';
+// OAuth client of the app (Google Cloud console); the same value is in apps-script/Code.gs.
+var GOOGLE_CLIENT_ID = '756842922233-g99d6lg8buft7dbrfupom5ct0o1rjkrf.apps.googleusercontent.com';
 
-var S = { pw: '', data: null, tab: 'month', back: 'month', ym: null, edit: null, form: null, open: {}, undo: null, loadedAt: 0,
+var S = { token: '', data: null, tab: 'month', back: 'month', ym: null, edit: null, form: null, open: {}, undo: null, loadedAt: 0,
   dash: { kind: 'month', anchor: null, person: '', cat: '', evo: 'cat' } };
 var view = document.getElementById('view');
 var eur = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' });
@@ -43,22 +45,27 @@ function stepper(prefix, label) {
 }
 
 // ------------------------------------------------------------ server
-function password() {
-  if (!S.pw) try { S.pw = localStorage.getItem(PW_KEY) || ''; } catch (e) { /* private mode */ }
-  return S.pw;
+// The device keeps a session key, never the password (sent once, at login).
+function token() {
+  if (!S.token) try { S.token = localStorage.getItem(TOKEN_KEY) || ''; } catch (e) { /* private mode */ }
+  return S.token;
 }
-function post(pw, fn, args) {
-  if (import.meta.env.MODE === 'mock') return import('./mock.js').then(function (m) { return m.mockCall(pw, fn, args); });
+function keep(t) {
+  S.token = t;
+  try { localStorage.setItem(TOKEN_KEY, t); } catch (e) { /* kept for this visit only */ }
+}
+function post(body) {
+  if (import.meta.env.MODE === 'mock') return import('./mock.js').then(function (m) { return m.mockCall(body); });
   // text/plain keeps it a "simple" request: Apps Script answers no CORS preflight.
-  return fetch(API_URL, { method: 'POST', body: JSON.stringify({ pw: pw, fn: fn, args: args }) }).then(function (r) {
+  return fetch(API_URL, { method: 'POST', body: JSON.stringify(body) }).then(function (r) {
     if (!r.ok) throw new Error('Le serveur ne répond pas (' + r.status + ').');
     return r.json();
   }, function () { throw new Error('Pas de connexion. Réessaie dans un instant.'); });
 }
 function call(fn) {
   var args = [].slice.call(arguments, 1);
-  return post(password(), fn, args).then(function (res) {
-    if (res.error === 'auth') { lock(); throw new Error('Mot de passe à saisir de nouveau.'); }
+  return post({ token: token(), fn: fn, args: args }).then(function (res) {
+    if (res.error === 'auth') { lock(); throw new Error('Connexion expirée : reconnecte-toi avec Google.'); }
     if (res.error) throw new Error(res.error);
     return res.data;
   });
@@ -72,33 +79,49 @@ function setData(d) {
 }
 function fail(e) { toast((e && e.message) || String(e), { error: true }); }
 
-// ------------------------------------------------------------ password gate
-function lock() {
-  try { localStorage.removeItem(PW_KEY); } catch (e) { /* private mode: nothing stored */ }
-  S.pw = ''; S.data = null;
+// ------------------------------------------------------------ Google sign-in gate
+function lock(message) {
+  try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(OLD_PW_KEY); } catch (e) { /* private mode: nothing stored */ }
+  S.token = ''; S.data = null;
   document.body.classList.add('locked');
-  view.innerHTML = '<form class="gate" id="gate" novalidate><span class="mark big">€</span><h1>Budget du foyer</h1>' +
-    '<p>Saisis le mot de passe du foyer. Il reste enregistré sur cet appareil.</p>' +
-    '<label class="pwbox">' + icon('lock') + '<input id="pw" type="password" autocomplete="current-password" placeholder="Mot de passe" aria-label="Mot de passe" required></label>' +
-    '<p class="gate-err" id="gate-err" role="alert"></p><button class="btn primary" id="gate-go">Entrer</button></form>';
-  $('#pw').focus();
+  view.innerHTML = '<div class="gate"><span class="mark big">€</span><h1>Budget du foyer</h1>' +
+    '<p>Connecte-toi avec le compte Google avec lequel le Sheets du budget est partagé.</p>' +
+    '<div id="gbtn" class="gbtn"></div><p class="gate-err" id="gate-err" role="alert">' + esc(message || '') + '</p></div>';
+  renderGoogleButton();
 }
-function unlock(ev) {
-  ev.preventDefault();
-  var pw = $('#pw').value, btn = $('#gate-go'), err = $('#gate-err');
-  if (!pw) { $('#pw').focus(); return; }
-  btn.disabled = true; btn.textContent = 'Vérification…'; err.textContent = '';
-  post(pw, 'getData', []).then(function (res) {
-    if (res.error) throw new Error(res.error === 'auth' ? 'Mot de passe incorrect.' : res.error);
-    S.pw = pw;
-    try { localStorage.setItem(PW_KEY, pw); } catch (e) { /* kept for this visit only */ }
-    document.body.classList.remove('locked');
-    setData(res.data);
-  }).catch(function (e) {
-    btn.disabled = false; btn.textContent = 'Entrer'; err.textContent = e.message;
-    $('#pw').select();
+
+function renderGoogleButton() {
+  if (import.meta.env.MODE === 'mock') {
+    $('#gbtn').innerHTML = '<button type="button" class="btn primary" id="mock-google">Se connecter avec Google (aperçu)</button>';
+    $('#mock-google').onclick = function () { signIn('mock'); };
+    return;
+  }
+  loadGoogle().then(function () {
+    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: function (r) { signIn(r.credential); }, ux_mode: 'popup' });
+    google.accounts.id.renderButton($('#gbtn'), { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', locale: 'fr', width: 280 });
+  }).catch(function () { $('#gate-err').textContent = 'Impossible de charger la connexion Google. Vérifie ta connexion internet.'; });
+}
+
+function loadGoogle() {
+  if (window.google && google.accounts) return Promise.resolve();
+  return new Promise(function (ok, ko) {
+    var sc = document.createElement('script');
+    sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true; sc.onload = ok; sc.onerror = ko;
+    document.head.appendChild(sc);
   });
 }
+
+function signIn(credential) {
+  $('#gate-err').textContent = 'Vérification…';
+  post({ fn: 'googleLogin', credential: credential }).then(function (res) {
+    if (res.error === 'denied') throw new Error('Ce compte Google n\'a pas accès au Sheets du budget. Demande qu\'on te le partage en modification.');
+    if (res.error) throw new Error(res.error === 'auth' ? 'Connexion Google refusée. Réessaie.' : res.error);
+    keep(res.data.token);
+    document.body.classList.remove('locked');
+    return load();
+  }).catch(function (e) { var err = $('#gate-err'); if (err) err.textContent = e.message; });
+}
+
 // Coming back to the app re-reads the spreadsheet, so edits made by hand show up.
 document.addEventListener('visibilitychange', function () {
   if (document.visibilityState === 'visible' && S.data && Date.now() - S.loadedAt > 20000) load();
@@ -233,7 +256,6 @@ document.addEventListener('keydown', function (ev) {
 });
 
 document.addEventListener('submit', function (ev) {
-  if (ev.target.id === 'gate') return unlock(ev);
   if (ev.target.id !== 'f') return;
   ev.preventDefault();
   var f = S.form, amount = dec($('#amount').value);
@@ -696,6 +718,6 @@ document.addEventListener('click', function (ev) {
   }
 });
 
-if (password()) { document.body.classList.remove('locked'); load(); } else lock();
+if (token()) { document.body.classList.remove('locked'); load(); } else lock();
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register('./sw.js').catch(function () { /* install offer only */ });

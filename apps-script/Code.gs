@@ -93,36 +93,113 @@ var DEFAULT_CATEGORIES = [
 // The web app runs as the owner and is open to anyone with the URL: the password is the only gate.
 var API = { getData: getData, saveExpense: saveExpense, deleteExpense: deleteExpense, restoreExpense: restoreExpense, markPassed: markPassed, prepareMonth: prepareMonth, importBank: importBank };
 
+// Access: Google sign-in on the web app; only people the spreadsheet is shared with (editors, owner) get in.
+// A verified Google identity is exchanged for a long random session key; only its hash is kept, with the email,
+// and the email must still be allowed on every call, so un-sharing the spreadsheet closes the app.
+var GOOGLE_CLIENT_ID = '756842922233-g99d6lg8buft7dbrfupom5ct0o1rjkrf.apps.googleusercontent.com';
+var TOKEN_MS = 180 * 24 * 3600 * 1000, MAX_TOKENS = 20;
+
 function doPost(e) {
   var out;
   try {
     var req = JSON.parse(e.postData.contents);
-    if (!passwordOk(req.pw)) {
-      Utilities.sleep(1500); // ponytail: slows guessing; add a lockout if the URL ever leaks
-      out = { error: 'auth' };
-    } else if (!API.hasOwnProperty(req.fn)) {
-      out = { error: 'Action inconnue.' };
-    } else {
-      out = { data: API[req.fn].apply(null, req.args || []) };
-    }
+    if (req.fn === 'googleLogin') out = googleLogin(req.credential);
+    else if (!tokenOk(req.token)) out = { error: 'auth' };
+    else if (!API.hasOwnProperty(req.fn)) out = { error: 'Action inconnue.' };
+    else out = { data: API[req.fn].apply(null, req.args || []) };
   } catch (err) {
     out = { error: err.message };
   }
   return ContentService.createTextOutput(JSON.stringify(out)).setMimeType(ContentService.MimeType.JSON);
 }
 
-function passwordOk(pw) {
-  var hash = PropertiesService.getScriptProperties().getProperty('PASSWORD_HASH');
-  return !!hash && typeof pw === 'string' && hashOf(pw) === hash;
+function nowMs() {
+  return Date.now();
 }
 
-function hashOf(pw) {
-  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'budget:' + pw, Utilities.Charset.UTF_8));
+function props() {
+  return PropertiesService.getScriptProperties();
+}
+
+function readJson(key, fallback) {
+  try { return JSON.parse(props().getProperty(key)) || fallback; } catch (e) { return fallback; }
+}
+
+// Asks Google whether the ID token is genuine, recent, for this app and for a verified address.
+function googleEmail(credential) {
+  if (typeof credential !== 'string' || !credential || credential.length > 4096) return '';
+  var res = UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=' + encodeURIComponent(credential), { muteHttpExceptions: true });
+  if (res.getResponseCode() !== 200) return '';
+  var t = JSON.parse(res.getContentText());
+  var fresh = Number(t.exp) * 1000 > nowMs(), fromGoogle = t.iss === 'https://accounts.google.com' || t.iss === 'accounts.google.com';
+  return t.aud === GOOGLE_CLIENT_ID && fromGoogle && fresh && String(t.email_verified) === 'true' ? String(t.email).toLowerCase() : '';
+}
+
+// Owner and editors of the spreadsheet, cached a few minutes.
+function allowedEmails() {
+  var cache = CacheService.getScriptCache(), hit = cache.get('ALLOWED');
+  if (hit) return JSON.parse(hit);
+  var ss = SpreadsheetApp.getActive();
+  var emails = ss.getEditors().map(function (u) { return u.getEmail(); }).concat([ss.getOwner() ? ss.getOwner().getEmail() : ''])
+    .filter(String).map(function (e) { return e.toLowerCase(); });
+  cache.put('ALLOWED', JSON.stringify(emails), 600);
+  return emails;
+}
+
+function forgetAccessCache() {
+  CacheService.getScriptCache().put('ALLOWED', '', 1);
+}
+
+function googleLogin(credential) {
+  var email = googleEmail(credential);
+  if (!email) return { error: 'auth' };
+  if (allowedEmails().indexOf(email) < 0) return { error: 'denied' };
+  var token = (Utilities.getUuid() + Utilities.getUuid()).replace(/-/g, '');
+  var tokens = storedTokens(), kept = {};
+  tokens[hashOf(token)] = { exp: nowMs() + TOKEN_MS, email: email };
+  Object.keys(tokens).sort(function (a, b) { return tokens[b].exp - tokens[a].exp; }).slice(0, MAX_TOKENS)
+    .forEach(function (k) { kept[k] = tokens[k]; });
+  props().setProperty('TOKENS', JSON.stringify(kept));
+  return { data: { token: token, email: email } };
+}
+
+// Valid session keys (hash → {exp, email}), expired ones dropped.
+function storedTokens() {
+  var tokens = readJson('TOKENS', {}), now = nowMs(), out = {};
+  Object.keys(tokens).forEach(function (k) { if (tokens[k] && tokens[k].exp > now) out[k] = tokens[k]; });
+  return out;
+}
+
+function tokenOk(token) {
+  if (typeof token !== 'string' || token.length < 32) return false;
+  var t = storedTokens()[hashOf(token)];
+  return !!t && allowedEmails().indexOf(t.email) >= 0;
+}
+
+function hashOf(text) {
+  return Utilities.base64Encode(Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, 'budget:' + text, Utilities.Charset.UTF_8));
+}
+
+function logoutAll() {
+  props().deleteProperty('TOKENS');
+}
+
+function logoutAllMenu() {
+  logoutAll();
+  SpreadsheetApp.getUi().alert('Tous les appareils sont déconnectés : chacun devra se reconnecter avec Google.');
+}
+
+// Run once from the menu after an update: Google asks the owner to allow the script to check sign-ins.
+function authorizeGoogle() {
+  UrlFetchApp.fetch('https://oauth2.googleapis.com/tokeninfo?id_token=x', { muteHttpExceptions: true });
+  forgetAccessCache();
+  SpreadsheetApp.getUi().alert('C\'est prêt : l\'appli accepte les comptes Google avec qui ce Sheets est partagé en modification.');
 }
 
 function onOpen() {
   var menu = SpreadsheetApp.getUi().createMenu('Budget')
-    .addItem('Définir le mot de passe de l\'appli', 'setPassword')
+    .addItem('Autoriser la connexion Google', 'authorizeGoogle')
+    .addItem('Déconnecter tous les appareils', 'logoutAllMenu')
     .addItem('Créer les onglets manquants', 'setup')
     .addItem('Préparer le mois suivant', 'prepareNextMonth');
   // Import.gs exists only while a one-off import of bank statements is pending.
@@ -134,16 +211,6 @@ function prepareNextMonth() {
   var ss = SpreadsheetApp.getActive();
   withLock(function () { ensureMonth(ss, addMonths(currentYm(), 1)); refreshEnvelopes(ss); });
   ss.setActiveSheet(ss.getSheetByName(tabName(addMonths(currentYm(), 1))));
-}
-
-function setPassword() {
-  var ui = SpreadsheetApp.getUi();
-  var r = ui.prompt('Mot de passe de l\'appli', 'Au moins 10 caractères. L\'appli le demande une fois par appareil.', ui.ButtonSet.OK_CANCEL);
-  if (r.getSelectedButton() !== ui.Button.OK) return;
-  var pw = r.getResponseText().trim();
-  if (pw.length < 10) { ui.alert('Trop court : au moins 10 caractères.'); return; }
-  PropertiesService.getScriptProperties().setProperty('PASSWORD_HASH', hashOf(pw));
-  ui.alert('Mot de passe enregistré. Les appareils déjà connectés devront le saisir à nouveau.');
 }
 
 // ------------------------------------------------------------------ setup

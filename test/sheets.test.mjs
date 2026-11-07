@@ -308,4 +308,31 @@ const env = (b, name, key) => loadCode(b).readMonth(b.getSheetByName(name)).rows
   assert.deepEqual(realLabels(b, 'Novembre 2026'), ['Remboursement mutuelle', 'Papa Fries', 'Virement de CPAM', 'Auchan', 'Prélèvement de DGFIP']);
 }
 
+// ---------------------------------------------------------------- access: Google sign-in, for the people the Sheets is shared with
+{
+  const b = book(), code = loadCode(b);
+  b.owner = 'owner@gmail.com'; b.editors = ['owner@gmail.com', 'alex@gmail.com'];
+  const exp = String(Math.floor(Date.now() / 1000) + 3600), aud = code.GOOGLE_CLIENT_ID;
+  const idt = (email, extra = {}) => ({ aud, iss: 'https://accounts.google.com', email, email_verified: 'true', exp, ...extra });
+  b.idTokens = { good: idt('alex@gmail.com'), stranger: idt('bot@gmail.com'), otherApp: idt('alex@gmail.com', { aud: 'someone-else' }),
+    unverified: idt('alex@gmail.com', { email_verified: 'false' }), old: idt('alex@gmail.com', { exp: '1000' }) };
+  const post = (body) => JSON.parse(code.doPost({ postData: { contents: JSON.stringify(body) } }).text);
+  assert.deepEqual(post({ fn: 'getData', args: [] }), { error: 'auth' }, 'nothing without a key');
+  assert.deepEqual(post({ fn: 'login', pw: 'anything' }), { error: 'auth' }, 'no password login any more');
+  for (const t of ['stranger', 'otherApp', 'unverified', 'old', 'forged']) {
+    assert.equal(post({ fn: 'googleLogin', credential: t }).error, t === 'stranger' ? 'denied' : 'auth', t);
+  }
+  const token = post({ fn: 'googleLogin', credential: 'good' }).data.token;
+  assert.ok(token.length >= 32);
+  assert.ok(post({ token, fn: 'getData', args: [] }).data.months, 'the key opens the data');
+  assert.deepEqual(post({ token: token + 'x', fn: 'getData', args: [] }), { error: 'auth' });
+  b.editors = ['owner@gmail.com'];
+  code.forgetAccessCache();
+  assert.deepEqual(post({ token, fn: 'getData', args: [] }), { error: 'auth' }, 'un-sharing the Sheets closes the app too');
+  b.editors = ['owner@gmail.com', 'alex@gmail.com']; code.forgetAccessCache();
+  const again = post({ fn: 'googleLogin', credential: 'good' }).data.token;
+  code.logoutAll();
+  assert.deepEqual(post({ token: again, fn: 'getData', args: [] }), { error: 'auth' }, 'revoked from the Sheets menu');
+}
+
 console.log('sheets: all checks pass');
