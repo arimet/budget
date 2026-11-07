@@ -14,8 +14,8 @@ const month = (ym, extra) => ({ ym, tab: ym, opening: 1000, rows: [
   row(ym + '-02', 'Auchan', 300, 'Alimentation', 'Courses'),
   row(ym + '-05', 'Netflix', 14.99, 'Abonnements & télécoms', 'Streaming & musique'),
   row(ym + '-28', 'Virement employeur A', 0, 'Revenus', 'Salaires', 2500),
-  ...[3, 10, 17, 24].map((d) => row(ym + '-' + d, 'Boulangerie Cilla', 6, 'Alimentation', 'Boulangerie & marché')),
-  ...[4, 11, 18].map((d) => row(ym + '-' + d, 'EasyPark', 3, 'Transport', 'Péage & parking')),
+  ...[3, 10, 17, 24].map((d) => row(ym + '-' + String(d).padStart(2, '0'), 'Boulangerie Cilla', 6, 'Alimentation', 'Boulangerie & marché')),
+  ...[4, 11, 18].map((d) => row(ym + '-' + String(d).padStart(2, '0'), 'EasyPark', 3, 'Transport', 'Péage & parking')),
   ...extra
 ] });
 const data = {
@@ -53,8 +53,22 @@ assert.equal(round(r.fees.avoidable), 17.59, 'overdraft interest is avoidable, t
 
 // Month against the average of the three before it.
 const c = Insights.compare(data, '2026-11');
-assert.deepEqual(plain(c[0]), { cat: 'Alimentation', now: 300 + 24 + 200, avg: 300 + 24 + 60, delta: 140, pct: round(140 / 384 * 100) });
+const { subs: _subs, ...first } = c[0];
+assert.deepEqual(plain(first), { cat: 'Alimentation', now: 300 + 24 + 200, avg: 300 + 24 + 60, delta: 140, pct: round(140 / 384 * 100) });
 assert.ok(c.every((x) => x.cat !== 'Revenus'));
+assert.deepEqual(plain(c[0].subs.map((x) => [x.sub, x.now, x.avg, x.delta])), [['Restaurants', 200, 60, 140], ['Courses', 300, 300, 0], ['Boulangerie & marché', 24, 24, 0]],
+  'a category unfolds into its sub-categories');
+
+// Period against the period before it (dashboard): what went up, what went down.
+const mv = Insights.movers(data, ['2026-11'], ['2026-10'], {});
+assert.deepEqual(plain(mv.up.map((x) => [x.cat, x.delta])), [['Alimentation', 140]]);
+assert.deepEqual(plain(mv.down.map((x) => [x.cat, round(x.delta)])), [['Impôts & finances', -52.05], ['Abonnements & télécoms', -12.14]]);
+assert.equal(round(mv.total.before), round(300 + 24 + 60 + 14.99 + 12.14 + 52.05 + 9));
+assert.equal(Insights.movers(data, ['2026-11'], ['2026-10'], { person: 'Personne' }).up.length, 0, 'filters apply');
+// A month still running is compared with the month before at the same date, not with all of it.
+const early = Insights.movers(data, ['2026-11'], ['2026-10'], {}, { now: '2026-11-03', before: '2026-10-03' });
+assert.equal(round(early.total.now), 300 + 6, 'Auchan on the 2nd, bakery on the 3rd');
+assert.equal(round(early.total.before), 300 + 52.05 + 6, 'October up to the 3rd only');
 
 // Small purchases that come back: per month and per year, over the last three months.
 const s = Insights.smallRepeated(data, '2026-11');

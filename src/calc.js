@@ -98,7 +98,7 @@ export var Calc = (function () {
       if (opts.cat && i.cat !== opts.cat) return;
       shares(i).forEach(function (s) {
         if (opts.person && s.who !== opts.person) return;
-        out.push({ ym: i.ym, cat: i.cat, sub: i.sub || '—', who: s.who, amount: s.amount });
+        out.push({ ym: i.ym, date: i.date, cat: i.cat, sub: i.sub || '—', who: s.who, amount: s.amount });
       });
     });
     return out;

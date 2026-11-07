@@ -400,7 +400,7 @@ function barHtml(key, title, value, max, extra, subs, over) {
   return '<li><button class="bar" data-action="toggle" data-key="' + esc(key) + '" aria-expanded="' + open + '"><span class="top"><b>' + title +
     (subs.length ? icon('next', 'chev') : '') + '</b><span>' + extra.right + '</span></span>' +
     '<span class="track"><span class="fill' + (over ? ' over' : '') + '" style="display:block;width:' + Math.max(0, Math.min(100, max > 0 ? value / max * 100 : 0)) + '%"></span></span>' +
-    (extra.below ? '<span class="left' + (over ? ' over' : '') + '">' + extra.below + '</span>' : '') + '</button>' +
+    (extra.below ? '<span class="left' + (over ? ' over' : '') + (extra.cls ? ' ' + extra.cls : '') + '">' + extra.below + '</span>' : '') + '</button>' +
     (open && subs.length ? '<ul class="subs">' + subs.map(function (s) {
       return '<li><span>' + esc(s.left) + '</span><span>' + esc(s.right) + '</span></li>';
     }).join('') + '</ul>' : '') + '</li>';
@@ -516,10 +516,14 @@ function viewInsights() {
   var cmp = Insights.compare(S.data, ym).filter(function (c) { return Math.max(c.now, c.avg) >= 10; });
   out += '<section class="card"><div class="head"><h2>Par rapport à d\'habitude</h2><span class="hint">moyenne des 3 mois précédents</span></div>' +
     '<ul class="cmp">' + cmp.map(function (c) {
-      var up = c.delta > 0.5, down = c.delta < -0.5;
-      return '<li><span class="c-name">' + ico(c.cat) + esc(c.cat) + '</span><span class="c-now num">' + money0(c.now) + '</span>' +
-        '<span class="c-delta num ' + (up ? 'up' : down ? 'down' : '') + '">' + (up ? '+' : down ? '−' : '') + money0(Math.abs(c.delta)) +
-        '</span><small class="c-avg">d\'habitude ' + money0(c.avg) + '</small></li>';
+      var key = 'cmp:' + c.cat, open = !!S.open[key];
+      var subs = c.subs.filter(function (x) { return Math.max(x.now, x.avg) >= 1; });
+      return '<li><button type="button" class="cmprow" data-action="toggle" data-key="' + esc(key) + '" aria-expanded="' + open + '">' +
+        '<span class="c-name">' + ico(c.cat) + esc(c.cat) + (subs.length ? icon('next', 'chev') : '') + '</span><span class="c-now num">' + money0(c.now) + '</span>' +
+        deltaHtml(c.delta) + '<small class="c-avg">d\'habitude ' + money0(c.avg) + '</small></button>' +
+        (open && subs.length ? '<ul class="cmpsubs">' + subs.map(function (x) {
+          return '<li><span>' + esc(x.sub || '—') + '</span><span class="num">' + money0(x.now) + '</span>' + deltaHtml(x.delta) + '</li>';
+        }).join('') + '</ul>' : '') + '</li>';
     }).join('') + '</ul></section>';
 
   var r = Insights.recurring(S.data, ym);
@@ -548,6 +552,11 @@ function viewInsights() {
         '<span class="num">' + money0(x.perMonth) + ' <small>/ mois</small> · ' + money0(x.yearly) + ' <small>/ an</small></span></li>';
     }).join('') + '</ul>' : '<p class="empty">Rien qui revienne souvent.</p>') + '</section>';
   return out;
+}
+
+function deltaHtml(delta) {
+  var up = delta > 0.5, down = delta < -0.5;
+  return '<span class="c-delta num ' + (up ? 'up' : down ? 'down' : '') + '">' + (up ? '+' : down ? '−' : '') + money0(Math.abs(delta)) + '</span>';
 }
 
 // Savings tabs kept by hand: what each person has, puts aside every month, and what it is for.
@@ -588,14 +597,44 @@ function viewDash() {
     '<select class="input" data-filter="cat" aria-label="Catégorie">' + opt('', 'Toutes les catégories', d.cat) +
     Calc.catOrder(S.data).filter(function (c) { return c !== 'Revenus'; }).map(function (c) { return opt(c, c, d.cat); }).join('') + '</select>' + '</div>';
 
-  out += '<div class="tiles">' + tile('Total', res.total, months.length > 1 ? 'soit ' + money0(res.total / months.length) + ' par mois' : '', true) + '</div>';
+  // Same filters, period of the same length just before: what went up, what went down.
+  var prevAnchor = Calc.addMonths(d.anchor, -months.length), prev = Calc.periodMonths(d.kind, prevAnchor);
+  // A period still running is compared with the previous one at the same point (same number of days in).
+  var running = months.indexOf(today().slice(0, 7)) >= 0, upTo = null;
+  if (running) {
+    var into = Math.round((asDate(today()) - asDate(months[0] + '-01')) / 864e5);
+    var cut = asDate(prev[0] + '-01'); cut.setDate(cut.getDate() + into);
+    upTo = { now: today(), before: cut.getFullYear() + '-' + ('0' + (cut.getMonth() + 1)).slice(-2) + '-' + ('0' + cut.getDate()).slice(-2) };
+  }
+  var mv = Insights.movers(S.data, months, prev, d, upTo), prevName = periodLabel(d.kind, prevAnchor);
+  var vs = 'par rapport à ' + prevName.toLowerCase() + (running ? ' à la même date' : '');
+  var change = mv.total.now - mv.total.before;
+  var byCatDelta = {};
+  mv.byCat.forEach(function (r) { byCatDelta[r.cat] = r.delta; });
+  out += '<div class="tiles">' +
+    tile('Dépensé', res.total, months.length > 1 ? 'soit ' + money0(res.total / months.length) + ' par mois' : periodLabel(d.kind, d.anchor), true) +
+    '<div class="tile"><small>Écart</small><b class="num ' + (change > 0.5 ? 'up' : change < -0.5 ? 'down' : '') + '">' + (change > 0.5 ? '+' : change < -0.5 ? '−' : '') +
+      money0(Math.abs(change)) + '</b><em>' + esc(vs) + ' (' + money0(mv.total.before) + ')</em></div></div>' +
+    '<p class="hint">Dépensé = toutes les sorties, prélèvements compris, moins les remboursements. Les salaires et les virements entre vos comptes n\'y sont pas.</p>';
+  if (mv.up.length || mv.down.length) {
+    var moverList = function (list, cls) {
+      return list.length ? '<ul class="movers">' + list.slice(0, 5).map(function (r) {
+        return '<li><span>' + ico(r.cat) + esc(r.cat) + '</span><b class="num ' + cls + '">' + (r.delta > 0 ? '+' : '−') + money0(Math.abs(r.delta)) + '</b>' +
+          '<small>' + money0(r.avg) + ' → ' + money0(r.now) + '</small></li>';
+      }).join('') + '</ul>' : '<p class="empty">Rien.</p>';
+    };
+    out += '<section class="card"><div class="head"><h2>Ce qui a bougé</h2><span class="hint">' + esc(vs) + '</span></div>' +
+      '<div class="movecols"><div><h3>En hausse</h3>' + moverList(mv.up, 'up') + '</div><div><h3>En baisse</h3>' + moverList(mv.down, 'down') + '</div></div></section>';
+  }
 
   var maxCat = res.byCat.length ? res.byCat[0].amount : 0;
   out += '<section class="card"><h2>' + (d.cat ? esc(d.cat) + ' : sous-catégories' : 'Par catégorie') + '</h2>' + (res.byCat.length ? '<ul class="bars">' +
     (d.cat ? (res.byCat[0] ? res.byCat[0].subs : []).map(function (s, i, all) {
       return barHtml('dsub:' + s.key, esc(s.key), s.amount, all[0].amount, { right: money0(s.amount) + pct(s.amount, res.total) }, []);
     }) : res.byCat.map(function (c) {
-      return barHtml('dcat:' + c.key, ico(c.key) + esc(c.key), c.amount, maxCat, { right: money0(c.amount) + pct(c.amount, res.total) }, totals(c.subs));
+      var dl = byCatDelta[c.key] || 0;
+      return barHtml('dcat:' + c.key, ico(c.key) + esc(c.key), c.amount, maxCat, { right: money0(c.amount) + pct(c.amount, res.total),
+        below: Math.abs(dl) >= 1 ? (dl > 0 ? '+' : '−') + money0(Math.abs(dl)) + ' ' + vs : '', cls: dl >= 1 ? 'up' : dl <= -1 ? 'down' : '' }, totals(c.subs));
     })).join('') + '</ul>' : '<p class="empty">Aucune dépense sur cette période.</p>') + '</section>';
 
   var maxWho = res.byWho.length ? res.byWho[0].amount : 0;

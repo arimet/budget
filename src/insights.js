@@ -43,16 +43,45 @@ function recurring(data, ym) {
     fees: { total: sum(fees), avoidable: sum(avoidable), lines: fees } };
 }
 
-// Spending per category this month against the average of the (up to) three months before that have a tab.
+// Spending per category this month against the average of the (up to) three months before that have a tab,
+// each category with the same comparison per sub-category.
 function compare(data, ym) {
   var before = withTab(data, monthsBefore(ym, 3));
-  var now = {}, past = {};
-  spendingIn(data, [ym]).forEach(function (e) { now[e.cat] = (now[e.cat] || 0) + e.amount; });
-  spendingIn(data, before).forEach(function (e) { past[e.cat] = (past[e.cat] || 0) + e.amount; });
-  return Object.keys(Object.assign({}, now, past)).map(function (cat) {
-    var avg = before.length ? (past[cat] || 0) / before.length : 0, n = now[cat] || 0, delta = n - avg;
-    return { cat: cat, now: round(n), avg: round(avg), delta: round(delta), pct: avg > 0 ? round(delta / avg * 100) : null };
-  }).sort(function (a, b) { return b.delta - a.delta; });
+  var now = spendingIn(data, [ym]), past = spendingIn(data, before);
+  return deltas(now, past, 'cat', before.length).map(function (c) {
+    var inCat = function (e) { return e.cat === c.cat; };
+    return Object.assign(c, { subs: deltas(now.filter(inCat), past.filter(inCat), 'sub', before.length).map(function (x) {
+      return { sub: x.sub, now: x.now, avg: x.avg, delta: x.delta };
+    }) });
+  });
+}
+
+// Sums of `now` against sums of `past` divided by `months`, grouped by `key`, biggest rise first.
+function deltas(now, past, key, months) {
+  var n = {}, p = {};
+  now.forEach(function (e) { n[e[key]] = (n[e[key]] || 0) + e.amount; });
+  past.forEach(function (e) { p[e[key]] = (p[e[key]] || 0) + e.amount; });
+  return Object.keys(Object.assign({}, n, p)).map(function (k) {
+    var avg = months ? (p[k] || 0) / months : 0, cur = n[k] || 0, delta = cur - avg, out = {};
+    out[key] = k;
+    return Object.assign(out, { now: round(cur), avg: round(avg), delta: round(delta), pct: avg > 0 ? round(delta / avg * 100) : null });
+  }).sort(function (a, b) { return b.delta - a.delta || b.now - a.now; });
+}
+
+// A period against the one before it, with the dashboard's filters: categories that went up, and down.
+// `upTo` ({now, before}) cuts both periods at the same point when the current one is still running.
+function movers(data, months, prevMonths, opts, upTo) {
+  var flat = function (ms, last) {
+    return Calc.dashboard(data, ms, opts).rows.filter(function (r) { return !last || (r.date && r.date <= last); });
+  };
+  var now = flat(months, upTo && upTo.now), before = flat(prevMonths, upTo && upTo.before);
+  var rows = deltas(now, before, 'cat', 1).filter(function (r) { return Math.abs(r.delta) >= 1; });
+  return {
+    total: { now: sum(now), before: sum(before) },
+    up: rows.filter(function (r) { return r.delta > 0; }),
+    down: rows.filter(function (r) { return r.delta < 0; }).sort(function (a, b) { return a.delta - b.delta; }),
+    byCat: rows
+  };
 }
 
 // Purchases under `max` € that came back at least 4 times over the three months ending at `ym`.
@@ -95,4 +124,4 @@ function monthLabel(ym) {
   return new Date(+ym.slice(0, 4), +ym.slice(5) - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 }
 
-export var Insights = { recurring: recurring, compare: compare, smallRepeated: smallRepeated, summary: summary };
+export var Insights = { recurring: recurring, compare: compare, movers: movers, smallRepeated: smallRepeated, summary: summary };

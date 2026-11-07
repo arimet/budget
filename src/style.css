@@ -112,6 +112,8 @@ body.locked main{padding-bottom:40px}
 .tile b.neg{color:var(--danger-text)}
 .tile em{font-style:normal;font-size:13px;color:var(--muted)}
 .tile.hero b{color:var(--accent-text)}
+.tile b.up{color:var(--danger-text)}
+.tile b.down{color:var(--accent-text)}
 @media (max-width:600px){ .tiles > .tile.hero:first-child:nth-last-child(odd){grid-column:1/-1} }
 
 .well{padding:6px 18px;border-radius:var(--r-lg);box-shadow:var(--inset);list-style:none}
@@ -316,9 +318,22 @@ select.input{appearance:none;padding-right:34px;background-image:linear-gradient
 .facts li{padding-left:18px;position:relative}
 .facts li::before{content:'';position:absolute;left:2px;top:.62em;width:7px;height:7px;border-radius:50%;background:var(--accent)}
 .cmp{list-style:none;padding:0;display:flex;flex-direction:column}
-.cmp li{display:grid;grid-template-columns:1fr auto auto;gap:2px 14px;align-items:baseline;padding:11px 0}
-.cmp li + li{box-shadow:0 -1px 0 var(--surface-deep)}
+.cmp > li + li{box-shadow:0 -1px 0 var(--surface-deep)}
+.cmprow{display:grid;grid-template-columns:1fr auto auto;gap:2px 14px;align-items:baseline;padding:11px 0;width:100%;border:0;background:none;
+  text-align:left;cursor:pointer;color:inherit;font:inherit}
+.c-name{display:inline-flex;align-items:center}
+.cmpsubs{list-style:none;padding:0 0 12px 30px;display:flex;flex-direction:column;gap:6px;font-size:14px}
+.cmpsubs li{display:grid;grid-template-columns:1fr auto auto;gap:14px;align-items:baseline;color:var(--text)}
 .c-name{font-weight:600;color:var(--text)}
+.movecols{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:18px}
+.movecols h3{font-size:14px;margin-bottom:6px}
+.movers{list-style:none;padding:0;display:flex;flex-direction:column}
+.movers li{display:grid;grid-template-columns:1fr auto;gap:0 12px;padding:8px 0;color:var(--text);font-size:14px}
+.movers li + li{box-shadow:0 -1px 0 var(--surface-deep)}
+.movers b{font-size:14px}
+.movers small{grid-column:1/-1;font-size:12px;color:var(--muted)}
+.movers .up,.bar .left.up{color:var(--danger-text)}
+.movers .down,.bar .left.down{color:var(--accent-text)}
 .c-now{font-weight:600;color:var(--text)}
 .c-delta{font-size:13px;font-weight:700;color:var(--text-2);min-width:80px;text-align:right}
 .c-delta.up{color:var(--danger-text)}
