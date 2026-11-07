@@ -6,7 +6,7 @@ import { Bank } from './bank.js';
 
 // The Apps Script web app bound to the spreadsheet (apps-script/Code.gs, doPost).
 var API_URL = 'https://script.google.com/macros/s/AKfycbxyr6VEJfNQ8ldL1vnc-MEFV6bQ4dYZ1qvTyeCMC5_x1lbwmCcbs2M36ITvcrTUSF0/exec';
-var TOKEN_KEY = 'budget-token', OLD_PW_KEY = 'budget-pw';
+var TOKEN_KEY = 'budget-token', OLD_PW_KEY = 'budget-pw', CACHE_KEY = 'budget-cache';
 // OAuth client of the app (Google Cloud console); the same value is in apps-script/Code.gs.
 var GOOGLE_CLIENT_ID = '756842922233-g99d6lg8buft7dbrfupom5ct0o1rjkrf.apps.googleusercontent.com';
 
@@ -35,13 +35,41 @@ function emojiOf(cat, sub) {
 }
 function ico(cat, sub) { return '<span class="e">' + emojiOf(cat, sub) + '</span>'; }
 var ICONS = {
-  prev: '<path d="M15 5l-7 7 7 7"/>', next: '<path d="M9 5l7 7-7 7"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  prev: '<path d="M15 5l-7 7 7 7"/>', sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>', auto: '<circle cx="12" cy="12" r="8"/><path d="M12 4v16" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/>',
+  download: '<path d="M12 4v12M7 11l5 5 5-5M5 20h14"/>', upload: '<path d="M12 16V4M7 9l5-5 5 5M5 20h14"/>', filter: '<path d="M4 6h16M7 12h10M10 18h4"/>', next: '<path d="M9 5l7 7-7 7"/>', plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6L6 18"/>', check: '<path d="M5 12l5 5 9-10"/>', lock: '<rect x="5" y="11" width="14" height="9" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>'
 };
 function icon(name, cls) { return '<svg class="ic' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" aria-hidden="true">' + ICONS[name] + '</svg>'; }
-function stepper(prefix, label) {
-  return '<div class="stepper"><button data-action="' + prefix + '-prev" aria-label="Précédent">' + icon('prev') + '</button><span>' + esc(label) +
-    '</span><button data-action="' + prefix + '-next" aria-label="Suivant">' + icon('next') + '</button></div>';
+// Same bar on every page: title, sync dot, and the month (or period) selector always at the same place.
+function topbar(title, right) {
+  return '<header class="topbar"><h1>' + esc(title) + '<span class="sync" title="Mise à jour depuis le Sheets"' + (S.syncing ? '' : ' hidden') + '></span></h1>' +
+    '<div class="topright">' + themeButton() + (right === undefined ? stepper('month', S.tab === 'dash' ? periodLabel(S.dash.kind, S.ym) : monthName(S.ym), shortLabel()) : right) +
+    '</div></header>';
+}
+function shortLabel() {
+  if (S.tab === 'dash' && S.dash.kind !== 'month') return periodLabel(S.dash.kind, S.ym);
+  var m = shortMonth(S.ym);
+  return cap(m) + ' ' + S.ym.slice(2, 4);
+}
+
+// ------------------------------------------------------------ theme: auto (follows the phone), light, dark
+var THEMES = ['auto', 'light', 'dark'], THEME_NAMES = { auto: 'Thème automatique', light: 'Thème clair', dark: 'Thème sombre' };
+function theme() { try { return localStorage.getItem('budget-theme') || 'auto'; } catch (e) { return 'auto'; } }
+function themeButton() {
+  var t = theme();
+  return '<button type="button" class="iconbtn themebtn" data-action="theme" aria-label="' + THEME_NAMES[t] + ' : changer" title="' + THEME_NAMES[t] + '">' +
+    icon(t === 'auto' ? 'auto' : t === 'light' ? 'sun' : 'moon') + '</button>';
+}
+function applyTheme(t) {
+  try { localStorage.setItem('budget-theme', t); } catch (e) { /* this visit only */ }
+  if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
+  var dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.querySelectorAll('meta[name=theme-color]').forEach(function (m) { m.setAttribute('content', dark ? '#1d1c25' : '#e7e5f0'); });
+}
+function stepper(prefix, label, short) {
+  return '<div class="stepper"><button data-action="' + prefix + '-prev" aria-label="Précédent">' + icon('prev') + '</button><span><b class="long">' + esc(label) +
+    '</b><b class="short">' + esc(short || label) + '</b></span><button data-action="' + prefix + '-next" aria-label="Suivant">' + icon('next') + '</button></div>';
 }
 
 // ------------------------------------------------------------ server
@@ -70,18 +98,24 @@ function call(fn) {
     return res.data;
   });
 }
-function load() { return call('getData').then(setData).catch(fail); }
+// The last data shown is kept on the device: the app opens on it at once, then refreshes from the Sheets.
+function load() {
+  S.syncing = true; paintSync();
+  return call('getData').then(function (d) { setData(d); try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) { /* full or private */ } })
+    .catch(fail).then(function () { S.syncing = false; paintSync(); });
+}
+function paintSync() { var el = $('.sync'); if (el) el.hidden = !S.syncing; }
 function setData(d) {
   S.data = d;
   S.loadedAt = Date.now();
-  if (!S.ym) { S.ym = d.today.slice(0, 7); S.dash.anchor = S.ym; S.ana = Calc.addMonths(S.ym, -1); }
+  if (!S.ym) S.ym = d.today.slice(0, 7);
   render(true);
 }
 function fail(e) { toast((e && e.message) || String(e), { error: true }); }
 
 // ------------------------------------------------------------ Google sign-in gate
 function lock(message) {
-  try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(OLD_PW_KEY); } catch (e) { /* private mode: nothing stored */ }
+  try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(OLD_PW_KEY); localStorage.removeItem(CACHE_KEY); } catch (e) { /* private mode: nothing stored */ }
   S.token = ''; S.data = null;
   document.body.classList.add('locked');
   view.innerHTML = '<div class="gate"><span class="mark big">€</span><h1>Budget du foyer</h1>' +
@@ -98,7 +132,8 @@ function renderGoogleButton() {
   }
   loadGoogle().then(function () {
     google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: function (r) { signIn(r.credential); }, ux_mode: 'popup' });
-    google.accounts.id.renderButton($('#gbtn'), { theme: 'outline', size: 'large', shape: 'pill', text: 'signin_with', locale: 'fr', width: 280 });
+    var dark = document.documentElement.dataset.theme === 'dark' || (!document.documentElement.dataset.theme && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    google.accounts.id.renderButton($('#gbtn'), { theme: dark ? 'filled_black' : 'outline', size: 'large', shape: 'pill', text: 'signin_with', locale: 'fr', width: 280 });
   }).catch(function () { $('#gate-err').textContent = 'Impossible de charger la connexion Google. Vérifie ta connexion internet.'; });
 }
 
@@ -141,6 +176,7 @@ function toast(msg, opts) {
 var VIEWS = { add: viewAdd, month: viewMonth, plan: viewPlan, insights: viewInsights, dash: viewDash };
 
 function render(fromData) {
+  document.body.classList.toggle('adding', S.tab === 'add');
   document.querySelectorAll('.nav [data-tab]').forEach(function (b) {
     if (b.dataset.tab === S.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   });
@@ -167,8 +203,8 @@ function viewAdd() {
   var e = S.edit;
   if (!S.form) S.form = newForm();
   return '<form class="form" id="f" novalidate>' +
-    '<div class="head"><h1>' + (e ? 'Modifier la dépense' : 'Nouvelle dépense') + '</h1>' +
-    '<button type="button" class="iconbtn" data-action="cancel-edit" aria-label="' + (e ? 'Annuler la modification' : 'Fermer') + '">' + icon('close') + '</button></div>' +
+    topbar(e ? 'Modifier la dépense' : 'Nouvelle dépense', '<button type="button" class="iconbtn" data-action="cancel-edit" aria-label="' +
+      (e ? 'Annuler la modification' : 'Fermer') + '">' + icon('close') + '</button>') +
     '<label class="amount" id="amountbox"><input id="amount" inputmode="decimal" enterkeyhint="next" placeholder="0,00" autocomplete="off" aria-label="Montant en euros" value="' +
     (e ? String(e.amount).replace('.', ',') : '') + '"><span>€</span></label>' +
     '<div class="field"><label class="l" for="label">Libellé <span>facultatif</span></label>' +
@@ -327,9 +363,7 @@ function noTab() {
 
 function viewMonth() {
   var m = Calc.month(S.data, S.ym), past = S.ym < today().slice(0, 7);
-  var out = '<div class="head"><h1>Mois</h1>' + stepper('month', monthName(S.ym)) + '</div>' +
-    '<div class="actions addrow"><button type="button" class="btn primary addbtn" data-action="add">' + icon('plus') + 'Ajouter une dépense</button>' +
-    '<label class="btn importbtn">Importer le relevé de la banque<input type="file" id="bankfile" accept=".csv,text/csv" hidden></label></div>';
+  var out = topbar('Mois');
   if (!m) return out + noTab();
   var incomeToCome = m.endOfMonth - m.endWithoutIncome;
   out += '<div class="tiles">' +
@@ -345,7 +379,8 @@ function viewMonth() {
     var total = days[k].reduce(function (s, e) { return s + e.amount; }, 0);
     return '<div class="day"><span>' + (k ? dayName(k) : 'Sans date') + '</span><span class="num">' + money(total) + '</span></div>' +
       days[k].map(function (e) { return rowHtml(e, false); }).join('');
-  }).join('') : '<p class="empty">Aucune opération ce mois-ci.</p>') + '</div></section>';
+  }).join('') : '<p class="empty">Aucune opération ce mois-ci.</p>') + '</div></section>' +
+    '<label class="btn importbtn">' + icon('upload') + 'Importer le relevé de la banque<input type="file" id="bankfile" accept=".csv,text/csv" hidden></label>' + installHtml();
   var trash = S.data.trash.filter(function (t) { return t.tab === tabLabel(S.ym); });
   if (trash.length) {
     out += '<section class="field"><h2>Supprimées</h2><ul class="well">' + trash.map(function (t) {
@@ -409,7 +444,7 @@ function barHtml(key, title, value, max, extra, subs, over) {
 function viewPlan() {
   var p = Calc.plan(S.data, S.ym);
   var budgetedActual = p.budgeted.reduce(function (s, r) { return s + r.actual; }, 0);
-  var out = '<div class="head"><h1>Prévu / réel</h1>' + stepper('month', monthName(S.ym)) + '</div><div class="tiles">' +
+  var out = topbar('Prévu / réel') + '<div class="tiles">' +
     tile('Dépensé sur les budgets', budgetedActual, 'sur ' + money0(p.budgetTotal) + ' prévus', true) +
     tile('Hors budget', p.actualTotal - budgetedActual, 'prélèvements, santé, loisirs…') + '</div>';
   out += '<section class="card"><h2>Budgets du mois</h2>' + (p.budgeted.length ? '<ul class="bars">' + p.budgeted.map(function (r) {
@@ -506,7 +541,7 @@ document.addEventListener('change', function (ev) {
 
 // ------------------------------------------------------------ analyses: where the money goes, where it could go less
 function viewInsights() {
-  var ym = S.ana, out = '<div class="head"><h1>Analyses</h1>' + stepper('ana', monthName(ym)) + '</div>';
+  var ym = S.ym, out = topbar('Analyses');
   if (!S.data.months.some(function (m) { return m.ym === ym; })) return out + '<p class="empty">Pas d\'onglet « ' + esc(monthName(ym)) + ' » dans le Sheets.</p>';
   out += '<section class="card"><h2>Bilan du mois</h2><ul class="facts">' + Insights.summary(S.data, ym).map(function (t) {
     return '<li>' + esc(t) + '</li>';
@@ -577,6 +612,20 @@ function savingsHtml() {
     }).join('') + '</div></section>';
 }
 
+// Dashboard filters in a sheet: one tap per choice, applied at once behind it.
+function openFilters() {
+  var d = S.dash, chips = function (key, all, items) {
+    return '<div class="pills">' + [['', all]].concat(items.map(function (x) { return [x, x]; })).map(function (x) {
+      return '<button type="button" class="pill" data-action="set-filter" data-key="' + key + '" data-value="' + esc(x[0]) + '" aria-pressed="' + (d[key] === x[0]) + '">' + esc(x[1]) + '</button>';
+    }).join('') + '</div>';
+  };
+  var body = '<div class="confirm"><h3>Pour qui</h3>' + chips('person', 'Tout le monde', S.data.people) +
+    '<h3>Catégorie</h3>' + chips('cat', 'Toutes', Calc.catOrder(S.data).filter(function (c) { return c !== 'Revenus'; })) +
+    '<div class="actions"><button type="button" class="btn primary" data-action="close-sheet">Voir le résultat</button></div></div>';
+  if (sheetEl.open) { sheetEl.querySelector('.sheet-body').innerHTML = body; return; }
+  openSheet('Filtres', body);
+}
+
 // ------------------------------------------------------------ dashboard
 function periodLabel(kind, anchor) {
   if (kind === 'year') return anchor.slice(0, 4);
@@ -585,20 +634,17 @@ function periodLabel(kind, anchor) {
 }
 
 function viewDash() {
-  var d = S.dash, months = Calc.periodMonths(d.kind, d.anchor);
+  var d = S.dash, months = Calc.periodMonths(d.kind, S.ym);
   var res = Calc.dashboard(S.data, months, d);
   var opt = function (v, label, sel) { return '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(label) + '</option>'; };
-  var out = '<div class="head"><h1>Tableau de bord</h1></div><div class="filters">' +
-    '<div class="seg">' + [['month', 'Mois'], ['quarter', 'Trimestre'], ['year', 'Année']].map(function (k) {
+  var active = (d.person ? 1 : 0) + (d.cat ? 1 : 0);
+  var out = topbar('Synthèse') + '<div class="toolbar"><div class="seg">' + [['month', 'Mois'], ['quarter', 'Trimestre'], ['year', 'Année']].map(function (k) {
       return '<button data-action="dash-kind" data-kind="' + k[0] + '" aria-pressed="' + (d.kind === k[0]) + '">' + k[1] + '</button>';
-    }).join('') + '</div>' + stepper('dash', periodLabel(d.kind, d.anchor)) +
-    '<select class="input" data-filter="person" aria-label="Personne">' + opt('', 'Tout le monde', d.person) +
-    S.data.people.map(function (p) { return opt(p, p, d.person); }).join('') + '</select>' +
-    '<select class="input" data-filter="cat" aria-label="Catégorie">' + opt('', 'Toutes les catégories', d.cat) +
-    Calc.catOrder(S.data).filter(function (c) { return c !== 'Revenus'; }).map(function (c) { return opt(c, c, d.cat); }).join('') + '</select>' + '</div>';
+    }).join('') + '</div><button type="button" class="pill filterbtn' + (active ? ' on' : '') + '" data-action="filters">' + icon('filter') +
+    (active ? [d.person, d.cat].filter(Boolean).join(' · ') : 'Filtres') + '</button></div>';
 
   // Same filters, period of the same length just before: what went up, what went down.
-  var prevAnchor = Calc.addMonths(d.anchor, -months.length), prev = Calc.periodMonths(d.kind, prevAnchor);
+  var prevAnchor = Calc.addMonths(S.ym, -months.length), prev = Calc.periodMonths(d.kind, prevAnchor);
   // A period still running is compared with the previous one at the same point (same number of days in).
   var running = months.indexOf(today().slice(0, 7)) >= 0, upTo = null;
   if (running) {
@@ -612,7 +658,7 @@ function viewDash() {
   var byCatDelta = {};
   mv.byCat.forEach(function (r) { byCatDelta[r.cat] = r.delta; });
   out += '<div class="tiles">' +
-    tile('Dépensé', res.total, months.length > 1 ? 'soit ' + money0(res.total / months.length) + ' par mois' : periodLabel(d.kind, d.anchor), true) +
+    tile('Dépensé', res.total, months.length > 1 ? 'soit ' + money0(res.total / months.length) + ' par mois' : periodLabel(d.kind, S.ym), true) +
     '<div class="tile"><small>Écart</small><b class="num ' + (change > 0.5 ? 'up' : change < -0.5 ? 'down' : '') + '">' + (change > 0.5 ? '+' : change < -0.5 ? '−' : '') +
       money0(Math.abs(change)) + '</b><em>' + esc(vs) + ' (' + money0(mv.total.before) + ')</em></div></div>' +
     '<p class="hint">Dépensé = toutes les sorties, prélèvements compris, moins les remboursements. Les salaires et les virements entre vos comptes n\'y sont pas.</p>';
@@ -722,6 +768,7 @@ document.addEventListener('click', function (ev) {
       $('#toast').className = '';
       call.apply(null, u.call).then(function (d) { setData(d); toast(u.msg); }).catch(fail); break;
     case 'add':
+      if (S.tab === 'add') return;
       S.back = S.tab; S.edit = null; S.form = null; S.tab = 'add'; render(); window.scrollTo(0, 0); break;
     case 'restore':
       t.disabled = true;
@@ -732,13 +779,16 @@ document.addEventListener('click', function (ev) {
       t.disabled = true;
       call('importBank', acts).then(function (d) { closeSheet(); setData(d); toast(acts.length + ' ligne' + (acts.length > 1 ? 's' : '') + ' mise' + (acts.length > 1 ? 's' : '') + ' à jour'); })
         .catch(function (e) { t.disabled = false; fail(e); }); break;
-    case 'ana-prev': case 'ana-next':
-      S.ana = Calc.addMonths(S.ana, a === 'ana-prev' ? -1 : 1); render(); break;
     case 'month-prev': case 'month-next':
-      S.ym = Calc.addMonths(S.ym, a === 'month-prev' ? -1 : 1); render(); break;
-    case 'dash-prev': case 'dash-next':
-      var step = { month: 1, quarter: 3, year: 12 }[S.dash.kind];
-      S.dash.anchor = Calc.addMonths(S.dash.anchor, a === 'dash-prev' ? -step : step); render(); break;
+      var step = S.tab === 'dash' ? { month: 1, quarter: 3, year: 12 }[S.dash.kind] : 1;
+      S.ym = Calc.addMonths(S.ym, a === 'month-prev' ? -step : step); render(); break;
+    case 'filters': openFilters(); break;
+    case 'theme':
+      applyTheme(THEMES[(THEMES.indexOf(theme()) + 1) % THEMES.length]); render(); toast(THEME_NAMES[theme()]); break;
+    case 'install':
+      if (S.install) S.install.prompt().then(function () { S.install = null; render(); }); break;
+    case 'set-filter':
+      S.dash[t.dataset.key] = t.dataset.value; render(); openFilters(); break;
     case 'dash-kind': S.dash.kind = t.dataset.kind; render(); break;
     case 'dash-evo': S.dash.evo = t.dataset.evo; render(); break;
     case 'toggle': S.open[t.dataset.key] = !S.open[t.dataset.key]; render(); break;
@@ -757,6 +807,22 @@ document.addEventListener('click', function (ev) {
   }
 });
 
-if (token()) { document.body.classList.remove('locked'); load(); } else lock();
+applyTheme(theme());
+if (/[?&]add\b/.test(location.search)) { S.tab = 'add'; S.back = 'month'; history.replaceState(null, '', location.pathname); }
+if (token()) {
+  document.body.classList.remove('locked');
+  try { var cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); if (cached && cached.months) setData(cached); } catch (e) { /* no cache */ }
+  load();
+} else lock();
+
+// Install: Android/desktop Chrome offer a prompt we can trigger; iPhone needs Safari's Share → Sur l'écran d'accueil.
+window.addEventListener('beforeinstallprompt', function (e) { e.preventDefault(); S.install = e; if (S.data && S.tab === 'month') render(); });
+function standalone() { return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
+function installHtml() {
+  if (standalone()) return '';
+  if (S.install) return '<button type="button" class="btn importbtn" data-action="install">' + icon('download') + 'Installer l\'appli sur cet appareil</button>';
+  if (/iPhone|iPad/.test(navigator.userAgent)) return '<p class="hint">Pour l\'installer : Safari → Partager → « Sur l\'écran d\'accueil ».</p>';
+  return '';
+}
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) navigator.serviceWorker.register('./sw.js').catch(function () { /* install offer only */ });

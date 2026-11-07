@@ -6,11 +6,18 @@
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#e7e5f0" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1d1c25" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
+<script>
+  // Chosen theme (auto, clair, sombre) applied before the first paint, so there is no flash of the other one.
+  try { var t = localStorage.getItem('budget-theme'); if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
 <title>Budget du foyer</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%236c4ed6'/%3E%3Ctext x='32' y='45' font-family='Arial' font-weight='700' font-size='36' text-anchor='middle' fill='white'%3E€%3C/text%3E%3C/svg%3E">
 <link rel="manifest" href="./manifest.webmanifest">
 <link rel="apple-touch-icon" href="./icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Budget">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,8 +28,9 @@
   <span class="brand" aria-hidden="true"><span class="mark">€</span><b>Budget</b></span>
   <button data-tab="month"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Mois</span></button>
   <button data-tab="plan"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".6"/></svg><span>Prévu / réel</span></button>
+  <button type="button" class="navadd" data-action="add" aria-label="Ajouter une dépense"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>Ajouter</span></button>
   <button data-tab="insights"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4"/><path d="M12 3a6 6 0 0 0-3.5 10.9c.6.4 1 1.1 1 1.8V16h5v-.3c0-.7.4-1.4 1-1.8A6 6 0 0 0 12 3z"/></svg><span>Analyses</span></button>
-  <button data-tab="dash"><svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V5M19 20v-6"/></svg><span>Tableau de bord</span></button>
+  <button data-tab="dash"><svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V5M19 20v-6"/></svg><span>Synthèse</span></button>
 </nav>
 <main id="view"><p class="loading">Lecture du Sheets…</p></main>
 <dialog id="sheet"></dialog>

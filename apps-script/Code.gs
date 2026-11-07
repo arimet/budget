@@ -135,14 +135,14 @@ function googleEmail(credential) {
   return t.aud === GOOGLE_CLIENT_ID && fromGoogle && fresh && String(t.email_verified) === 'true' ? String(t.email).toLowerCase() : '';
 }
 
-// Owner and editors of the spreadsheet, cached a few minutes.
+// Owner and editors of the spreadsheet, cached 30 minutes (un-sharing takes effect within that time).
 function allowedEmails() {
   var cache = CacheService.getScriptCache(), hit = cache.get('ALLOWED');
   if (hit) return JSON.parse(hit);
   var ss = SpreadsheetApp.getActive();
   var emails = ss.getEditors().map(function (u) { return u.getEmail(); }).concat([ss.getOwner() ? ss.getOwner().getEmail() : ''])
     .filter(String).map(function (e) { return e.toLowerCase(); });
-  cache.put('ALLOWED', JSON.stringify(emails), 600);
+  cache.put('ALLOWED', JSON.stringify(emails), 1800);
   return emails;
 }
 
@@ -326,7 +326,9 @@ function getData() {
   withLock(function () {
     ensureMonth(ss, currentYm());
     // Rows typed or inserted by hand in the Sheets may sit outside the running balance: lay it again where it drifted.
-    monthTabs(ss).forEach(function (t) { if (!balanceOk(ss, t.sh)) relayBalance(ss, t.sh); });
+    // Only last month onwards: older months are rarely touched, and checking every tab slows every open.
+    var from = addMonths(currentYm(), -1);
+    monthTabs(ss).forEach(function (t) { if (t.ym >= from && !balanceOk(ss, t.sh)) relayBalance(ss, t.sh); });
     refreshEnvelopes(ss);
   });
   var ctx = readContext(ss);
