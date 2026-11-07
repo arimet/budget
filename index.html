@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#e7e5f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1d1c25" media="(prefers-color-scheme: dark)">
+<title>Budget du foyer</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%236c4ed6'/%3E%3Ctext x='32' y='45' font-family='Arial' font-weight='700' font-size='36' text-anchor='middle' fill='white'%3E€%3C/text%3E%3C/svg%3E">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Budget">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Nunito:wght@700;800&display=swap">
+</head>
+<body class="locked">
+<nav class="nav" aria-label="Écrans">
+  <span class="brand" aria-hidden="true"><span class="mark">€</span><b>Budget</b></span>
+  <button data-tab="month"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="3"/><path d="M4 10h16M9 3v4M15 3v4"/></svg><span>Mois</span></button>
+  <button data-tab="plan"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r=".6"/></svg><span>Prévu / réel</span></button>
+  <button data-tab="dash"><svg viewBox="0 0 24 24"><path d="M5 20V11M12 20V5M19 20v-6"/></svg><span>Tableau de bord</span></button>
+</nav>
+<main id="view"><p class="loading">Lecture du Sheets…</p></main>
+<dialog id="sheet"></dialog>
+<div id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>

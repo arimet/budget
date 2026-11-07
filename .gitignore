@@ -1,0 +1,10 @@
+node_modules/
+dist/
+# Private: bank statements, migration files, design notes with real figures, local tooling
+releves/
+docs/
+scripts/
+.superpowers/
+.clasp.json
+apps-script/Import.gs
+.DS_Store
