@@ -274,4 +274,38 @@ const env = (b, name, key) => loadCode(b).readMonth(b.getSheetByName(name)).rows
   assert.deepEqual(t.map((x) => [x.id, x.label, x.tab]), [['a1', 'Remboursement mutuelle', 'Novembre 2026']]);
 }
 
+// ---------------------------------------------------------------- savings tabs
+{
+  const b = book();
+  b.add('Epargne Alex', [['LA', 1200, 'Appart : 300 €'], ['LDDS', 10, 'Vacances : 0€'], [], ['Total ', 1210], [], [], ['Placement mensuel'], [],
+    ['LA', 250], ['LDDS', 500], [], ['Total ', 750]]);
+  b.add('Epargne Camille', [['LA', 0.73], [], ['Total', 0.73], [], [], ['Placement mensuel'], [], ['LA', 0], [], ['Total', 0]]);
+  const s = loadCode(b).getData().savings;
+  assert.deepEqual(s.map((x) => x.who), ['Alex', 'Camille']);
+  assert.deepEqual(s[0].accounts, [{ name: 'LA', amount: 1200 }, { name: 'LDDS', amount: 10 }]);
+  assert.equal(s[0].total, 1210);
+  assert.deepEqual(s[0].monthly, [{ name: 'LA', amount: 250 }, { name: 'LDDS', amount: 500 }]);
+  assert.equal(s[0].monthlyTotal, 750);
+  assert.deepEqual(s[0].goals, [{ label: 'Appart', amount: 300 }, { label: 'Vacances', amount: 0 }]);
+  assert.equal(s[1].total, 0.73);
+}
+
+// ---------------------------------------------------------------- bank import, in one go
+{
+  const b = book(), code = loadCode(b), nov = b.getSheetByName('Novembre 2026');
+  const tax = code.readMonth(nov).rows.find((r) => r.label === 'Prélèvement de DGFIP');
+  const data = code.importBank([
+    { type: 'pass', id: tax.id, amount: 349, date: '2026-11-06' },
+    { type: 'add', expense: { date: '2026-11-03', amount: 10.7, cat: 'Alimentation', sub: 'Restaurants', label: 'Papa Fries', who: ['Foyer'], means: 'CB du 03/11' } },
+    { type: 'add', expense: { date: '2026-11-04', amount: -9, cat: 'Santé', sub: 'Remboursements', label: 'Virement de CPAM', who: ['Foyer'], means: '' } },
+  ]);
+  const m = data.months.find((x) => x.ym === '2026-11');
+  assert.equal(m.rows.find((r) => r.label === 'Prélèvement de DGFIP').forecast, false);
+  const fries = m.rows.find((r) => r.label === 'Papa Fries');
+  assert.equal(fries.debit, 10.7);
+  assert.equal(fries.means, 'CB du 03/11');
+  assert.equal(m.rows.find((r) => r.label === 'Virement de CPAM').means, '', 'a transfer keeps an empty CB / Chèque cell');
+  assert.deepEqual(realLabels(b, 'Novembre 2026'), ['Remboursement mutuelle', 'Papa Fries', 'Virement de CPAM', 'Auchan', 'Prélèvement de DGFIP']);
+}
+
 console.log('sheets: all checks pass');

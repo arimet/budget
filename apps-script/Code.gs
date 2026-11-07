@@ -91,7 +91,7 @@ var DEFAULT_CATEGORIES = [
 // ------------------------------------------------------------------ JSON API for the web app (hosted elsewhere)
 
 // The web app runs as the owner and is open to anyone with the URL: the password is the only gate.
-var API = { getData: getData, saveExpense: saveExpense, deleteExpense: deleteExpense, restoreExpense: restoreExpense, markPassed: markPassed, prepareMonth: prepareMonth };
+var API = { getData: getData, saveExpense: saveExpense, deleteExpense: deleteExpense, restoreExpense: restoreExpense, markPassed: markPassed, prepareMonth: prepareMonth, importBank: importBank };
 
 function doPost(e) {
   var out;
@@ -272,6 +272,7 @@ function getData() {
     budgets: ctx.budgets,
     fixed: readFixed(ss, ctx),
     trash: readTrash(ss, ctx.tz),
+    savings: readSavings(ss),
     months: monthTabs(ss).map(function (t) { return readMonth(t.sh, ctx); })
   };
 }
@@ -287,41 +288,48 @@ function readFixed(ss, ctx) {
 // ------------------------------------------------------------------ writing (each returns fresh data)
 
 function saveExpense(e) {
-  var amount = Number(e.amount);
-  if (!isFinite(amount) || amount === 0) throw new Error('Montant invalide.');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) throw new Error('Date invalide.');
-  if (!e.cat) throw new Error('Choisis une catégorie.');
-  if (!e.who || !e.who.length) throw new Error('Choisis pour qui.');
-  var id = e.id || newId();
+  var id;
   withLock(function () {
-    var ss = SpreadsheetApp.getActive(), target = e.date.slice(0, 7);
-    var sh = ensureMonth(ss, target);
-    if (!sh) throw new Error('Pas d\'onglet « ' + tabName(target) + ' » dans le Sheets pour cette date.');
-    var values = {}, d = e.date.split('-');
-    values[COL.date] = new Date(+d[0], +d[1] - 1, +d[2]);
-    values[COL.means] = 'CB du ' + d[2] + '/' + d[1];
-    values[COL.label] = e.label || e.sub || e.cat;
-    values[COL.credit] = amount < 0 ? Math.round(-amount * 100) / 100 : '';
-    values[COL.debit] = amount > 0 ? Math.round(amount * 100) / 100 : '';
-    values[COL.cat] = e.cat;
-    values[COL.sub] = e.sub || '';
-    values[COL.who] = e.who.join(', ');
-    values[COL.id] = id;
-    var at = e.id ? findById(ss, e.id) : null;
-    // An edited line keeps how it was paid ("Chèque n° …", "Retrait …", a direct debit's empty cell); only card lines follow the date.
-    var oldMeans = at ? str(at.sh.getRange(at.row, COL.means).getValue()) : '';
-    if (at && oldMeans.indexOf('CB') !== 0) values[COL.means] = oldMeans;
-    if (at && tabYm(at.sh.getName()) === target && !isBold(at.sh, at.row)) {
-      writeCells(at.sh, at.row, values);
-    } else {
-      if (at) removeRow(ss, at);
-      insertReal(ss, sh, e.date, values);
-    }
+    var ss = SpreadsheetApp.getActive();
+    id = writeExpense(ss, e);
     refreshEnvelopes(ss);
   });
   var data = getData();
   data.saved = id; // lets the app offer "Annuler" right after adding
   return data;
+}
+
+// Writes one real line (new or edited) and returns its id. `e.means`, when given, is the "CB / Chèque" cell.
+function writeExpense(ss, e) {
+  var amount = Number(e.amount);
+  if (!isFinite(amount) || amount === 0) throw new Error('Montant invalide.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date)) throw new Error('Date invalide.');
+  if (!e.cat) throw new Error('Choisis une catégorie.');
+  if (!e.who || !e.who.length) throw new Error('Choisis pour qui.');
+  var id = e.id || newId(), target = e.date.slice(0, 7);
+  var sh = ensureMonth(ss, target);
+  if (!sh) throw new Error('Pas d\'onglet « ' + tabName(target) + ' » dans le Sheets pour cette date.');
+  var values = {}, d = e.date.split('-');
+  values[COL.date] = new Date(+d[0], +d[1] - 1, +d[2]);
+  values[COL.means] = typeof e.means === 'string' ? e.means : 'CB du ' + d[2] + '/' + d[1];
+  values[COL.label] = e.label || e.sub || e.cat;
+  values[COL.credit] = amount < 0 ? Math.round(-amount * 100) / 100 : '';
+  values[COL.debit] = amount > 0 ? Math.round(amount * 100) / 100 : '';
+  values[COL.cat] = e.cat;
+  values[COL.sub] = e.sub || '';
+  values[COL.who] = e.who.join(', ');
+  values[COL.id] = id;
+  var at = e.id ? findById(ss, e.id) : null;
+  // An edited line keeps how it was paid ("Chèque n° …", "Retrait …", a direct debit's empty cell); only card lines follow the date.
+  var oldMeans = at ? str(at.sh.getRange(at.row, COL.means).getValue()) : '';
+  if (at && oldMeans.indexOf('CB') !== 0) values[COL.means] = oldMeans;
+  if (at && tabYm(at.sh.getName()) === target && !isBold(at.sh, at.row)) {
+    writeCells(at.sh, at.row, values);
+  } else {
+    if (at) removeRow(ss, at);
+    insertReal(ss, sh, e.date, values);
+  }
+  return id;
 }
 
 // A deleted line is kept in the "Corbeille" tab so it can be put back (keep === false: undo of a line just added).
@@ -360,6 +368,25 @@ function restoreExpense(id) {
   return getData();
 }
 
+// "Epargne <prénom>" tabs, kept by hand: balances per account (A/B) above "Placement mensuel", monthly transfers below,
+// and what the savings are for in column C ("Vacances : 300 €").
+function readSavings(ss) {
+  return ss.getSheets().filter(function (sh) { return /^[ée]pargne\s/i.test(sh.getName()); }).map(function (sh) {
+    var last = sh.getLastRow(), values = last ? sh.getRange(1, 1, last, 3).getValues() : [];
+    var out = { who: sh.getName().replace(/^[ée]pargne\s+/i, ''), accounts: [], monthly: [], goals: [] }, list = out.accounts;
+    values.forEach(function (v) {
+      var name = str(v[0]);
+      if (/placement/i.test(name)) list = out.monthly;
+      else if (name && !/^total/i.test(name) && typeof v[1] === 'number') list.push({ name: name, amount: v[1] });
+      var m = str(v[2]).match(/^(.*?)\s*:\s*([\d\s.,]+)\s*€?$/);
+      if (m) out.goals.push({ label: m[1], amount: num(m[2]) });
+    });
+    out.total = Math.round(out.accounts.reduce(function (s, a) { return s + a.amount; }, 0) * 100) / 100;
+    out.monthlyTotal = out.monthly.reduce(function (s, a) { return s + a.amount; }, 0);
+    return out;
+  });
+}
+
 function readTrash(ss, tz) {
   var trash = ss.getSheetByName(TRASH), last = trash ? trash.getLastRow() : 0;
   if (last < 2) return [];
@@ -372,27 +399,47 @@ function readTrash(ss, tz) {
 
 // A forecast (bold) line has gone through: it becomes a real operation with the actual amount and date.
 function markPassed(id, amount, date) {
+  withLock(function () {
+    var ss = SpreadsheetApp.getActive();
+    passForecast(ss, id, amount, date);
+    refreshEnvelopes(ss);
+  });
+  return getData();
+}
+
+function passForecast(ss, id, amount, date) {
   amount = Number(amount);
   if (!isFinite(amount) || amount <= 0) throw new Error('Montant invalide.');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error('Date invalide.');
+  var at = findById(ss, id);
+  if (!at || !isBold(at.sh, at.row)) throw new Error('Prévision introuvable : elle a peut-être déjà été passée.');
+  var old = at.sh.getRange(at.row, 1, 1, WIDTH).getValues()[0], values = {}, d = date.split('-');
+  var credit = num(old[COL.credit - 1]) > 0;
+  values[COL.date] = new Date(+d[0], +d[1] - 1, +d[2]);
+  values[COL.means] = str(old[COL.means - 1]) === 'CB' ? 'CB du ' + d[2] + '/' + d[1] : old[COL.means - 1];
+  values[COL.label] = old[COL.label - 1];
+  values[COL.credit] = credit ? Math.round(amount * 100) / 100 : '';
+  values[COL.debit] = credit ? '' : Math.round(amount * 100) / 100;
+  values[COL.cat] = old[COL.cat - 1];
+  values[COL.sub] = old[COL.sub - 1];
+  values[COL.who] = old[COL.who - 1];
+  values[COL.id] = newId();
+  var sh = ensureMonth(ss, date.slice(0, 7));
+  if (!sh) throw new Error('Pas d\'onglet « ' + tabName(date.slice(0, 7)) + ' » dans le Sheets pour cette date.');
+  removeRow(ss, at);
+  insertReal(ss, sh, date, values);
+}
+
+// Lines from the bank export, validated in the app: forecasts that went through and missing lines, in one go.
+function importBank(actions) {
+  if (!actions || !actions.length) throw new Error('Rien à importer.');
   withLock(function () {
-    var ss = SpreadsheetApp.getActive(), at = findById(ss, id);
-    if (!at || !isBold(at.sh, at.row)) throw new Error('Prévision introuvable : elle a peut-être déjà été passée.');
-    var old = at.sh.getRange(at.row, 1, 1, WIDTH).getValues()[0], values = {}, d = date.split('-');
-    var credit = num(old[COL.credit - 1]) > 0;
-    values[COL.date] = new Date(+d[0], +d[1] - 1, +d[2]);
-    values[COL.means] = str(old[COL.means - 1]) === 'CB' ? 'CB du ' + d[2] + '/' + d[1] : old[COL.means - 1];
-    values[COL.label] = old[COL.label - 1];
-    values[COL.credit] = credit ? Math.round(amount * 100) / 100 : '';
-    values[COL.debit] = credit ? '' : Math.round(amount * 100) / 100;
-    values[COL.cat] = old[COL.cat - 1];
-    values[COL.sub] = old[COL.sub - 1];
-    values[COL.who] = old[COL.who - 1];
-    values[COL.id] = newId();
-    var sh = ensureMonth(ss, date.slice(0, 7));
-    if (!sh) throw new Error('Pas d\'onglet « ' + tabName(date.slice(0, 7)) + ' » dans le Sheets pour cette date.');
-    removeRow(ss, at);
-    insertReal(ss, sh, date, values);
+    var ss = SpreadsheetApp.getActive();
+    actions.forEach(function (a) {
+      if (a.type === 'pass') passForecast(ss, a.id, a.amount, a.date);
+      else if (a.type === 'add') writeExpense(ss, { date: a.expense.date, amount: a.expense.amount, cat: a.expense.cat, sub: a.expense.sub,
+        label: a.expense.label, who: a.expense.who, means: a.expense.means });
+    });
     refreshEnvelopes(ss);
   });
   return getData();

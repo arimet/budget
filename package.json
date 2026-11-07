@@ -6,7 +6,7 @@
     "dev": "vite",
     "mock": "vite --mode mock",
     "build": "vite build",
-    "test": "node test/calc.test.mjs && node test/sheets.test.mjs"
+    "test": "node test/calc.test.mjs && node test/insights.test.mjs && node test/bank.test.mjs && node test/sheets.test.mjs"
   },
   "devDependencies": {
     "vite": "^7.1.0"

@@ -1,6 +1,8 @@
 // Interface: one state object, each screen rendered from it as an HTML string, clicks handled by delegation.
 import './style.css';
 import { Calc } from './calc.js';
+import { Insights } from './insights.js';
+import { Bank } from './bank.js';
 
 // The Apps Script web app bound to the spreadsheet (apps-script/Code.gs, doPost).
 var API_URL = 'https://script.google.com/macros/s/AKfycbxyr6VEJfNQ8ldL1vnc-MEFV6bQ4dYZ1qvTyeCMC5_x1lbwmCcbs2M36ITvcrTUSF0/exec';
@@ -65,7 +67,7 @@ function load() { return call('getData').then(setData).catch(fail); }
 function setData(d) {
   S.data = d;
   S.loadedAt = Date.now();
-  if (!S.ym) { S.ym = d.today.slice(0, 7); S.dash.anchor = S.ym; }
+  if (!S.ym) { S.ym = d.today.slice(0, 7); S.dash.anchor = S.ym; S.ana = Calc.addMonths(S.ym, -1); }
   render(true);
 }
 function fail(e) { toast((e && e.message) || String(e), { error: true }); }
@@ -113,7 +115,7 @@ function toast(msg, opts) {
 }
 
 // ------------------------------------------------------------ rendering
-var VIEWS = { add: viewAdd, month: viewMonth, plan: viewPlan, dash: viewDash };
+var VIEWS = { add: viewAdd, month: viewMonth, plan: viewPlan, insights: viewInsights, dash: viewDash };
 
 function render(fromData) {
   document.querySelectorAll('.nav [data-tab]').forEach(function (b) {
@@ -304,7 +306,8 @@ function noTab() {
 function viewMonth() {
   var m = Calc.month(S.data, S.ym), past = S.ym < today().slice(0, 7);
   var out = '<div class="head"><h1>Mois</h1>' + stepper('month', monthName(S.ym)) + '</div>' +
-    '<button type="button" class="btn primary addbtn" data-action="add">' + icon('plus') + 'Ajouter une dépense</button>';
+    '<div class="actions addrow"><button type="button" class="btn primary addbtn" data-action="add">' + icon('plus') + 'Ajouter une dépense</button>' +
+    '<label class="btn importbtn">Importer le relevé de la banque<input type="file" id="bankfile" accept=".csv,text/csv" hidden></label></div>';
   if (!m) return out + noTab();
   var incomeToCome = m.endOfMonth - m.endWithoutIncome;
   out += '<div class="tiles">' +
@@ -420,6 +423,127 @@ function openPassed(id) {
     '<label class="mf"><span>Date</span><span class="unit"><input id="ps-date" type="date" value="' + date + '"></span></label></div>' +
     '<div class="actions"><button type="button" class="btn primary" data-action="passed-yes" data-id="' + esc(id) + '">Valider</button>' +
     '<button type="button" class="btn" data-action="close-sheet">Annuler</button></div></div>');
+}
+
+// ------------------------------------------------------------ bank export: what is there, what went through, what is missing
+function readBankFile(file) {
+  file.arrayBuffer().then(function (buf) {
+    var ops = Bank.parse(new TextDecoder('windows-1252').decode(buf));
+    if (!ops.length) throw new Error('Ce fichier ne ressemble pas à un export CSV de La Banque Postale.');
+    S.imp = Bank.reconcile(S.data, ops);
+    openImport();
+  }).catch(fail);
+}
+
+function openImport() {
+  var r = S.imp, catOptions = function (cat, sub) {
+    return S.data.categories.map(function (c) {
+      var v = c.cat + '|' + c.sub;
+      return '<option value="' + esc(v) + '"' + (c.cat === cat && c.sub === sub ? ' selected' : '') + '>' + esc(c.cat + ' · ' + c.sub) + '</option>';
+    }).join('') + (cat === 'Divers' && sub === 'À classer' ? '' : '');
+  };
+  var line = function (kind, i, op, extra) {
+    return '<li class="imp"><label class="impcheck"><input type="checkbox" data-imp="' + kind + ':' + i + '" checked>' +
+      '<span class="txt"><b>' + esc(op.merchant) + '</b><small>' + shortDate(op.date) + ' · ' + (op.amount < 0 ? '+' + money(-op.amount) : money(op.amount)) +
+      '</small></span></label>' + (extra || '') + '</li>';
+  };
+  var body = '<div class="confirm"><p>' + r.known.length + ' ligne' + (r.known.length > 1 ? 's' : '') + ' déjà dans le Sheets' +
+    (r.skipped ? ', ' + r.skipped + ' d\'un mois sans onglet laissée' + (r.skipped > 1 ? 's' : '') + ' de côté' : '') + '.</p>';
+  if (r.toPass.length) body += '<h3>Prévisions passées</h3><ul class="implist">' + r.toPass.map(function (p, i) {
+    return line('pass', i, p.op, '<small class="impnote">« ' + esc(p.forecast.label) + ' »</small>');
+  }).join('') + '</ul>';
+  if (r.missing.length) body += '<h3>Pas encore saisies</h3><ul class="implist">' + r.missing.map(function (m, i) {
+    return line('add', i, m.op, '<select class="input impcat" data-impcat="' + i + '">' + catOptions(m.cat, m.sub) + '</select>');
+  }).join('') + '</ul>';
+  var n = r.toPass.length + r.missing.length;
+  body += n ? '<div class="actions"><button type="button" class="btn primary" data-action="import-yes">Mettre à jour le Sheets</button>' +
+    '<button type="button" class="btn" data-action="close-sheet">Annuler</button></div>' : '<p>Tout est déjà à jour.</p>';
+  openSheet('Relevé de la banque', body + '</div>');
+}
+
+function importActions() {
+  var r = S.imp, out = [];
+  document.querySelectorAll('[data-imp]').forEach(function (box) {
+    if (!box.checked) return;
+    var k = box.dataset.imp.split(':'), i = +k[1];
+    if (k[0] === 'pass') {
+      var p = r.toPass[i];
+      out.push({ type: 'pass', id: p.forecast.id, amount: Math.abs(p.op.amount), date: p.op.date });
+    } else {
+      var m = r.missing[i], cs = $('[data-impcat="' + i + '"]').value.split('|');
+      out.push({ type: 'add', expense: { date: m.op.date, amount: m.op.amount, cat: cs[0], sub: cs[1], label: m.op.merchant, who: [S.data.people[0]],
+        means: m.op.card ? 'CB du ' + m.op.date.slice(8) + '/' + m.op.date.slice(5, 7) : '' } });
+    }
+  });
+  return out;
+}
+
+document.addEventListener('change', function (ev) {
+  if (ev.target.id === 'bankfile' && ev.target.files[0]) { readBankFile(ev.target.files[0]); ev.target.value = ''; }
+});
+
+// ------------------------------------------------------------ analyses: where the money goes, where it could go less
+function viewInsights() {
+  var ym = S.ana, out = '<div class="head"><h1>Analyses</h1>' + stepper('ana', monthName(ym)) + '</div>';
+  if (!S.data.months.some(function (m) { return m.ym === ym; })) return out + '<p class="empty">Pas d\'onglet « ' + esc(monthName(ym)) + ' » dans le Sheets.</p>';
+  out += '<section class="card"><h2>Bilan du mois</h2><ul class="facts">' + Insights.summary(S.data, ym).map(function (t) {
+    return '<li>' + esc(t) + '</li>';
+  }).join('') + '</ul></section>';
+
+  out += savingsHtml();
+  var cmp = Insights.compare(S.data, ym).filter(function (c) { return Math.max(c.now, c.avg) >= 10; });
+  out += '<section class="card"><div class="head"><h2>Par rapport à d\'habitude</h2><span class="hint">moyenne des 3 mois précédents</span></div>' +
+    '<ul class="cmp">' + cmp.map(function (c) {
+      var up = c.delta > 0.5, down = c.delta < -0.5;
+      return '<li><span class="c-name">' + ico(c.cat) + esc(c.cat) + '</span><span class="c-now num">' + money0(c.now) + '</span>' +
+        '<span class="c-delta num ' + (up ? 'up' : down ? 'down' : '') + '">' + (up ? '+' : down ? '−' : '') + money0(Math.abs(c.delta)) +
+        '</span><small class="c-avg">d\'habitude ' + money0(c.avg) + '</small></li>';
+    }).join('') + '</ul></section>';
+
+  var r = Insights.recurring(S.data, ym);
+  out += '<section class="card"><div class="head"><h2>Abonnements et prélèvements</h2><span class="hint">' + money0(r.totalYearly) + ' par an, ' +
+    money0(r.totalYearly / 12) + ' par mois</span></div>';
+  r.groups.forEach(function (g) {
+    out += '<p class="lead">' + g.names.length + ' abonnements ' + esc(g.sub.toLowerCase()) + ' (' + esc(g.names.join(', ')) + ') : <b>' + money0(g.yearly) + ' par an</b>.</p>';
+  });
+  r.priceChanges.forEach(function (p) {
+    out += '<p class="lead">' + esc(p.name) + ' est passé de ' + money(p.from) + ' à ' + money(p.to) + '.</p>';
+  });
+  out += '<ul class="bars">' + r.items.map(function (i) {
+    return '<li class="kv"><span>' + ico(i.cat, i.sub) + esc(i.name) + (i.times !== 12 ? ' <small>' + i.times + ' fois par an</small>' : '') + '</span>' +
+      '<span class="num">' + money0(i.yearly) + ' <small>/ an</small></span></li>';
+  }).join('') + '</ul>';
+  if (r.fees.total > 0) {
+    out += '<p class="lead">Frais bancaires sur 12 mois : <b>' + money0(r.fees.total) + '</b>' +
+      (r.fees.avoidable > 0 ? ', dont ' + money0(r.fees.avoidable) + ' évitables (intérêts de découvert, commissions)' : '') + '.</p>';
+  }
+  out += '</section>';
+
+  var small = Insights.smallRepeated(S.data, ym);
+  out += '<section class="card"><div class="head"><h2>Petites dépenses qui reviennent</h2><span class="hint">achats de moins de 30 €, sur 3 mois</span></div>' +
+    (small.length ? '<ul class="bars">' + small.map(function (x) {
+      return '<li class="kv"><span>' + ico(x.cat, x.sub) + esc(x.label) + ' <small>' + x.count + ' fois</small></span>' +
+        '<span class="num">' + money0(x.perMonth) + ' <small>/ mois</small> · ' + money0(x.yearly) + ' <small>/ an</small></span></li>';
+    }).join('') + '</ul>' : '<p class="empty">Rien qui revienne souvent.</p>') + '</section>';
+  return out;
+}
+
+// Savings tabs kept by hand: what each person has, puts aside every month, and what it is for.
+function savingsHtml() {
+  var sv = S.data.savings || [];
+  if (!sv.length) return '';
+  var total = sv.reduce(function (s, p) { return s + p.total; }, 0), monthly = sv.reduce(function (s, p) { return s + p.monthlyTotal; }, 0);
+  return '<section class="card"><div class="head"><h2>Épargne</h2><span class="hint">' + money0(total) + ' en tout' +
+    (monthly ? ' · ' + money0(monthly) + ' mis de côté par mois' : '') + '</span></div>' +
+    (monthly ? '<p class="lead">Au même rythme, l\'épargne atteindra <b>' + money0(total + monthly * 12) + '</b> dans un an.</p>' : '') +
+    '<div class="savings">' + sv.map(function (p) {
+      return '<div class="saver"><div class="saver-head"><b>' + esc(p.who) + '</b><span class="num">' + money0(p.total) + '</span></div>' +
+        '<ul>' + p.accounts.map(function (a) { return '<li><span>' + esc(a.name) + '</span><span class="num">' + money(a.amount) + '</span></li>'; }).join('') + '</ul>' +
+        (p.monthlyTotal ? '<small>+ ' + money0(p.monthlyTotal) + ' par mois (' + p.monthly.filter(function (m) { return m.amount; }).map(function (m) {
+          return esc(m.name) + ' ' + money0(m.amount); }).join(', ') + ')</small>' : '<small>Pas de versement mensuel</small>') +
+        (p.goals.length ? '<div class="goals">' + p.goals.map(function (g) {
+          return '<span class="pill static">' + esc(g.label) + ' · ' + money0(g.amount) + '</span>'; }).join('') + '</div>' : '') + '</div>';
+    }).join('') + '</div></section>';
 }
 
 // ------------------------------------------------------------ dashboard
@@ -541,6 +665,14 @@ document.addEventListener('click', function (ev) {
     case 'restore':
       t.disabled = true;
       call('restoreExpense', t.dataset.id).then(function (d) { setData(d); toast('Ligne récupérée'); }).catch(function (e) { t.disabled = false; fail(e); }); break;
+    case 'import-yes':
+      var acts = importActions();
+      if (!acts.length) { closeSheet(); return; }
+      t.disabled = true;
+      call('importBank', acts).then(function (d) { closeSheet(); setData(d); toast(acts.length + ' ligne' + (acts.length > 1 ? 's' : '') + ' mise' + (acts.length > 1 ? 's' : '') + ' à jour'); })
+        .catch(function (e) { t.disabled = false; fail(e); }); break;
+    case 'ana-prev': case 'ana-next':
+      S.ana = Calc.addMonths(S.ana, a === 'ana-prev' ? -1 : 1); render(); break;
     case 'month-prev': case 'month-next':
       S.ym = Calc.addMonths(S.ym, a === 'month-prev' ? -1 : 1); render(); break;
     case 'dash-prev': case 'dash-next':

@@ -24,6 +24,9 @@ book.add('Charges fixes', [['Nom', 'CB / Chèque', 'Montant', 'Jour', 'Catégori
   ['Virement employeur A', '', 2500, 28, 'Revenus', 'Salaires', 'Foyer', '', '', ''],
   ['Virement employeur B', '', 1300, 30, 'Revenus', 'Salaires', 'Foyer', '', '', '']]);
 
+book.add('Epargne Alex', [['LA', 4200, 'Appart : 3000 €'], ['LDDS', 1800, 'Vacances : 1200 €'], [], ['Total', 6000], [], [], ['Placement mensuel'], [], ['LA', 150], ['LDDS', 100], [], ['Total', 250]]);
+book.add('Epargne Camille', [['LA', 640], [], ['Total', 640], [], [], ['Placement mensuel'], [], ['LA', 20], [], ['Total', 20]]);
+
 // Past months: a tab with real rows only, like months kept by hand before the app.
 let seed = 7;
 const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
@@ -61,7 +64,7 @@ const d = now.getDate();
   code.saveExpense({ date: today.slice(0, 8) + pad(x), amount, cat, sub, label, who: ['Foyer'] }));
 
 const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpense: code.deleteExpense, restoreExpense: code.restoreExpense,
-  markPassed: code.markPassed, prepareMonth: code.prepareMonth };
+  markPassed: code.markPassed, prepareMonth: code.prepareMonth, importBank: code.importBank };
 
 // Password for the preview: "budget".
 export function mockCall(pw, fn, args) {
