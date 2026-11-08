@@ -203,6 +203,8 @@ var pull = { y: null, d: 0 }, ptr = $('#ptr');
 document.addEventListener('touchstart', function (ev) {
   pull.d = 0;
   pull.y = standalone() && window.scrollY <= 0 && S.data && !sheetEl.open && !S.syncing ? ev.touches[0].clientY : null;
+  var bar = $('.topbar');
+  if (pull.y != null && bar) ptr.style.top = bar.getBoundingClientRect().bottom + 'px';
 }, { passive: true });
 document.addEventListener('touchmove', function (ev) {
   if (pull.y == null) return;
@@ -210,14 +212,14 @@ document.addEventListener('touchmove', function (ev) {
   var k = Math.min(pull.d, 100) / 100;
   ptr.style.transition = 'none';
   ptr.style.opacity = k;
-  ptr.style.transform = 'translateY(' + (k * 60 - 50) + 'px) rotate(' + pull.d * 3 + 'deg)';
+  ptr.style.transform = 'translateY(' + (k * 66 - 50) + 'px) rotate(' + pull.d * 3 + 'deg)';
 }, { passive: true });
 document.addEventListener('touchend', function () {
   if (pull.y == null) return;
   pull.y = null; ptr.style.transition = '';
   var done = function () { ptr.classList.remove('go'); ptr.style.opacity = 0; ptr.style.transform = ''; };
   if (pull.d < 100) return done();
-  ptr.classList.add('go');
+  ptr.classList.add('go'); ptr.style.transform = 'translateY(16px)';
   load().then(done);
 });
 
