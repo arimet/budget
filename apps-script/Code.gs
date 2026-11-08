@@ -91,7 +91,7 @@ var DEFAULT_CATEGORIES = [
 // ------------------------------------------------------------------ JSON API for the web app (hosted elsewhere)
 
 // The web app runs as the owner and is open to anyone with the URL: the password is the only gate.
-var API = { getData: getData, saveExpense: saveExpense, deleteExpense: deleteExpense, restoreExpense: restoreExpense, markPassed: markPassed, prepareMonth: prepareMonth, importBank: importBank };
+var API = { getData: getData, saveExpense: saveExpense, deleteExpense: deleteExpense, restoreExpense: restoreExpense, markPassed: markPassed, saveForecast: saveForecast, prepareMonth: prepareMonth, importBank: importBank };
 
 // Access: Google sign-in on the web app; only people the spreadsheet is shared with (editors, owner) get in.
 // A verified Google identity is exchanged for a long random session key; only its hash is kept, with the email,
@@ -320,7 +320,9 @@ function readContext(ss) {
   return { ss: ss, tz: tz, people: people.length ? people : ['Foyer'], budgets: budgets, envelopes: envelopes };
 }
 
-function getData() {
+// `fresh` (pull to refresh) skips the cache.
+function getData(fresh) {
+  if (!fresh) { var hit = cachedData(); if (hit) return hit; }
   var ss = SpreadsheetApp.getActive();
   // Opening the app is when a new month gets its tab and envelopes catch up with lines typed in the Sheets.
   withLock(function () {
@@ -331,8 +333,8 @@ function getData() {
     monthTabs(ss).forEach(function (t) { if (t.ym >= from && !balanceOk(ss, t.sh)) relayBalance(ss, t.sh); });
     refreshEnvelopes(ss);
   });
-  var ctx = readContext(ss);
-  return {
+  var gen = CacheService.getScriptCache().get('GEN'), ctx = readContext(ss);
+  var data = {
     today: Utilities.formatDate(now(), ctx.tz, 'yyyy-MM-dd'),
     people: ctx.people,
     categories: rows(ss, 'Catégories').filter(function (r) { return str(r['Catégorie']); }).map(function (r) {
@@ -344,6 +346,35 @@ function getData() {
     savings: readSavings(ss),
     months: monthTabs(ss).map(function (t) { return readMonth(t.sh, ctx); })
   };
+  if (CacheService.getScriptCache().get('GEN') === gen) cacheData(data); // no write slipped in while reading
+  return data;
+}
+
+// getData's answer stays in the script cache until something changes: a write (withLock), an edit by hand (onEdit),
+// a new day, or a pull to refresh. Changes that fire no onEdit (bold, inserted rows) show after a pull or within 6 h.
+// Split in pieces: one cache value holds at most 100 KB.
+var PIECE = 25000;
+function cachedData() {
+  var c = CacheService.getScriptCache(), head = c.get('DATA');
+  if (!head) return null;
+  head = JSON.parse(head);
+  if (head.day !== Utilities.formatDate(now(), Session.getScriptTimeZone(), 'yyyy-MM-dd')) return null;
+  var keys = [];
+  for (var i = 0; i < head.n; i++) keys.push('DATA' + i);
+  var parts = c.getAll(keys), text = '';
+  for (i = 0; i < head.n; i++) { if (parts['DATA' + i] == null) return null; text += parts['DATA' + i]; }
+  return JSON.parse(text);
+}
+function cacheData(data) {
+  var text = JSON.stringify(data), all = {}, n = Math.ceil(text.length / PIECE);
+  for (var i = 0; i < n; i++) all['DATA' + i] = text.slice(i * PIECE, (i + 1) * PIECE);
+  all.DATA = JSON.stringify({ day: Utilities.formatDate(now(), Session.getScriptTimeZone(), 'yyyy-MM-dd'), n: n });
+  CacheService.getScriptCache().putAll(all, 21600);
+}
+function dropData() {
+  var c = CacheService.getScriptCache();
+  c.remove('DATA');
+  c.put('GEN', String(Date.now()) + Math.random(), 21600);
 }
 
 function readFixed(ss, ctx) {
@@ -399,6 +430,38 @@ function writeExpense(ss, e) {
     insertReal(ss, sh, e.date, values);
   }
   return id;
+}
+
+// A forecast ("À venir"), new or edited: a bold line without a date, at the bottom of its month. Amount < 0 = to receive.
+// Deleting one goes through deleteExpense(id, false).
+function saveForecast(e) {
+  withLock(function () {
+    var ss = SpreadsheetApp.getActive(), amount = Number(e.amount);
+    if (!isFinite(amount) || amount === 0) throw new Error('Montant invalide.');
+    if (!/^\d{4}-\d{2}$/.test(e.ym)) throw new Error('Mois invalide.');
+    if (!e.cat) throw new Error('Choisis une catégorie.');
+    if (!e.who || !e.who.length) throw new Error('Choisis pour qui.');
+    var at = e.id ? findById(ss, e.id) : null;
+    if (at && !isBold(at.sh, at.row)) throw new Error('Cette opération est déjà passée : modifie-la dans les opérations du mois.');
+    var sh = ensureMonth(ss, e.ym);
+    if (!sh) throw new Error('On ne prévoit rien pour un mois passé.');
+    var values = {};
+    values[COL.means] = typeof e.means === 'string' ? e.means : at ? at.sh.getRange(at.row, COL.means).getValue() : '';
+    values[COL.label] = e.label || e.sub || e.cat;
+    values[COL.credit] = amount < 0 ? Math.round(-amount * 100) / 100 : '';
+    values[COL.debit] = amount > 0 ? Math.round(amount * 100) / 100 : '';
+    values[COL.cat] = e.cat;
+    values[COL.sub] = e.sub || '';
+    values[COL.who] = e.who.join(', ');
+    values[COL.id] = e.id || 'prev:' + newId();
+    var row;
+    if (at && at.sh.getName() === sh.getName()) row = at.row;
+    else { if (at) removeRow(ss, at); row = Math.max(contentLastRow(sh), FIRST_ROW - 1) + 1; }
+    writeCells(sh, row, values);
+    sh.getRange(row, 1, 1, WIDTH).setFontWeight('bold');
+    relayBalance(ss, sh);
+  });
+  return getData();
 }
 
 // A deleted line is kept in the "Corbeille" tab so it can be put back (keep === false: undo of a line just added).
@@ -617,7 +680,7 @@ function ensureMonth(ss, ymStr) {
   var name = tabName(ymStr), sh = ss.getSheetByName(name);
   if (sh) return sh;
   if (ymStr < currentYm()) return null;
-  if (ymStr > addMonths(currentYm(), 1)) throw new Error('Date trop loin : on prépare au plus le mois prochain (pas d\'onglet « ' + name + ' »).');
+  if (ymStr > addMonths(currentYm(), 12)) throw new Error('Date trop loin : on prépare au plus 12 mois à l\'avance (pas d\'onglet « ' + name + ' »).');
   var prevName = tabName(addMonths(ymStr, -1));
   var prev = ss.getSheetByName(prevName) || (addMonths(ymStr, -1) >= currentYm() ? ensureMonth(ss, addMonths(ymStr, -1)) : null);
   if (prev) {
@@ -700,6 +763,7 @@ function refreshEnvelopes(ss) {
 // Simple trigger: a category picked by hand narrows the sub-category dropdown next to it to that category's
 // sub-categories, and clears a sub-category that no longer fits. Writes made by the app do not fire it.
 function onEdit(e) {
+  dropData();
   var sh = e.range.getSheet(), name = sh.getName();
   var catCol = tabYm(name) ? COL.cat : name === 'Charges fixes' ? 5 : name === 'Budgets' ? 1 : 0;
   var first = tabYm(name) ? FIRST_ROW : 2;
@@ -752,7 +816,7 @@ function rows(ss, name) {
 function withLock(fn) {
   var lock = LockService.getScriptLock();
   lock.waitLock(10000);
-  try { fn(); SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+  try { fn(); SpreadsheetApp.flush(); } finally { dropData(); lock.releaseLock(); }
 }
 
 function newId() {

@@ -117,6 +117,7 @@ export function loadCodeFrom(src, book, today) {
         const b = { requireValueInList: (l) => { rule.list = l; return b; }, setAllowInvalid: (x) => { rule.allowInvalid = x; return b; }, build: () => rule };
         return b; }
     },
+    Session: { getScriptTimeZone: () => 'Europe/Paris' },
     LockService: { getScriptLock: () => ({ waitLock() {}, releaseLock() {} }) },
     Utilities: {
       getUuid: () => ('0000000' + (++uuid).toString(16)).slice(-8) + '-0000-4000-8000-' + ('00000000000' + (uuid * 7919).toString(16)).slice(-12),
@@ -135,7 +136,8 @@ export function loadCodeFrom(src, book, today) {
       const t = decodeURIComponent(url.split('id_token=')[1] || ''), info = (book.idTokens || {})[t];
       return { getResponseCode: () => (info ? 200 : 400), getContentText: () => JSON.stringify(info || { error: 'invalid_token' }) };
     } },
-    CacheService: { getScriptCache: () => ({ get: (k) => cache[k] || null, put: (k, v) => { cache[k] = v; } }) }
+    CacheService: { getScriptCache: () => ({ get: (k) => (k in cache ? cache[k] : null), put: (k, v) => { cache[k] = v; }, remove: (k) => { delete cache[k]; },
+      putAll: (o) => { Object.assign(cache, o); }, getAll: (ks) => Object.fromEntries(ks.filter((k) => k in cache).map((k) => [k, cache[k]])) }) }
   };
   const names = [...src.matchAll(/^function (\w+)/gm)].map((m) => m[1]).concat(['TABS', 'MONTHS_FR', 'GOOGLE_CLIENT_ID']);
   const body = src + `\nnow = function () { return new Date(${JSON.stringify(today + 'T12:00:00')}); };\nnowMs = function () { return Date.now() + (globalThis.__clock || 0); };\nreturn { ${names.join(', ')} };`;

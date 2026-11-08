@@ -64,7 +64,7 @@ const d = now.getDate();
   code.saveExpense({ date: today.slice(0, 8) + pad(x), amount, cat, sub, label, who: ['Foyer'] }));
 
 const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpense: code.deleteExpense, restoreExpense: code.restoreExpense,
-  markPassed: code.markPassed, prepareMonth: code.prepareMonth, importBank: code.importBank };
+  markPassed: code.markPassed, saveForecast: code.saveForecast, prepareMonth: code.prepareMonth, importBank: code.importBank };
 
 // Google sign-in in the preview: the fake button sends "mock", exchanged for a session key like on the real server.
 const MOCK_TOKEN = 'mock-session-key-0000000000000000';

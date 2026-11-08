@@ -100,9 +100,10 @@ function call(fn) {
 }
 // The last data shown is kept on the device: the app opens on it at once, then refreshes from the Sheets.
 // `quiet`: a refresh in the background stays silent when the network is not back yet (the data shown is kept).
-function load(quiet) {
+// `fresh`: a pull to refresh reads the Sheets itself, not the server's cached copy.
+function load(quiet, fresh) {
   S.syncing = true; paintSync();
-  return call('getData').then(function (d) { if (!waiting) store(d); })
+  return call('getData', !!fresh).then(function (d) { if (!waiting) store(d); })
     .catch(function (e) { if (!(quiet && e.offline && S.data)) fail(e); }).then(function () { S.syncing = waiting > 0; paintSync(); });
 }
 function store(d) { setData(d); try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) { /* full or private */ } }
@@ -220,7 +221,7 @@ document.addEventListener('touchend', function () {
   var done = function () { ptr.classList.remove('go'); ptr.style.opacity = 0; ptr.style.transform = ''; };
   if (pull.d < 100) return done();
   ptr.classList.add('go'); ptr.style.transform = 'translateY(16px)';
-  load().then(done);
+  load(false, true).then(done);
 });
 
 function toast(msg, opts) {
@@ -263,8 +264,9 @@ function newForm() { return { id: null, cat: '', sub: '', suggested: false, manu
 function viewAdd() {
   var e = S.edit;
   if (!S.form) S.form = newForm();
+  var fc = S.form.forecast;
   return '<form class="form" id="f" novalidate>' +
-    topbar(e ? 'Modifier' : 'Ajouter', '<button type="button" class="iconbtn" data-action="cancel-edit" aria-label="' +
+    topbar((e ? 'Modifier' : 'Ajouter') + (fc ? ' · à venir' : ''), '<button type="button" class="iconbtn" data-action="cancel-edit" aria-label="' +
       (e ? 'Annuler la modification' : 'Fermer') + '">' + icon('close') + '</button>') +
     '<div class="seg wide kind" id="kind">' + kindButtons() + '</div>' +
     '<label class="amount" id="amountbox"><input id="amount" inputmode="decimal" enterkeyhint="next" placeholder="0,00" autocomplete="off" aria-label="Montant en euros" value="' +
@@ -274,16 +276,17 @@ function viewAdd() {
     '<datalist id="labels"></datalist></div>' +
     '<div class="field"><span class="l">Catégorie <em id="sugg"></em></span><button type="button" class="catbtn" id="catbtn" data-action="pick"></button></div>' +
     '<div class="field"><span class="l">Pour <span id="sharehint"></span></span><div class="pills" id="who"></div></div>' +
+    (fc ? '<p class="hint">Prévue en ' + esc(monthName(S.form.ym)) + ', sans date : « C\'est passé » en fera une opération du mois.</p>' :
     '<div class="two"><div class="field"><label class="l" for="date">Date</label><input type="date" id="date" class="input" value="' + (e ? e.date : today()) + '"></div>' +
-    '<div class="field"><span class="l">Paiement</span><div id="means"></div></div></div>' +
+    '<div class="field"><span class="l">Paiement</span><div id="means"></div></div></div>') +
     '<div class="actions"><button class="btn primary" id="submit">' + (e ? 'Enregistrer' : 'Ajouter') + '</button>' +
     (e ? '<button type="button" class="btn danger" data-action="delete">Supprimer</button>' : '') + '</div></form>' +
-    (e ? '' : '<section class="field"><h2>Dernières dépenses</h2><div class="well" id="recent"></div></section>');
+    (e || fc ? '' : '<section class="field"><h2>Dernières dépenses</h2><div class="well" id="recent"></div></section>');
 }
 
 // An expense goes in Débit, a refund in Crédit (sent as a negative amount).
 function kindButtons() {
-  return [[false, 'Dépense'], [true, 'Remboursement']].map(function (k) {
+  return [[false, 'Dépense'], [true, S.form.forecast ? 'À recevoir' : 'Remboursement']].map(function (k) {
     return '<button type="button" data-action="kind" data-refund="' + k[0] + '" aria-pressed="' + (S.form.refund === k[0]) + '">' + k[1] + '</button>';
   }).join('');
 }
@@ -306,6 +309,7 @@ function meansText(f, date) {
   return '';
 }
 function paintMeans() {
+  if (!$('#means')) return; // forecasts have no payment
   var f = S.form, opts = [['cb', 'CB'], ['cheque', 'Chèque'], ['none', 'Aucun']];
   if (f.means.raw) opts.unshift(['keep', f.means.raw]);
   $('#means').innerHTML = '<div class="seg wide">' + opts.map(function (o) {
@@ -382,6 +386,7 @@ document.addEventListener('submit', function (ev) {
   var f = S.form, amount = Math.abs(dec($('#amount').value)) * (f.refund ? -1 : 1);
   if (!isFinite(amount) || amount === 0) { $('#amountbox').setAttribute('aria-invalid', 'true'); $('#amount').focus(); return; }
   if (!f.cat) { $('#catbtn').classList.add('bad'); openPicker(); return; }
+  if (f.forecast) return saveForecast(f, amount);
   if ($('#chequeno')) f.means.number = $('#chequeno').value.trim();
   var payload = { id: f.id || crypto.randomUUID().slice(0, 8), date: $('#date').value || today(), amount: amount, cat: f.cat, sub: f.sub, means: meansText(f, $('#date').value),
     label: $('#label').value.trim(), who: f.who };
@@ -396,6 +401,23 @@ document.addEventListener('submit', function (ev) {
   else toast((amount < 0 ? '+' : '') + money(Math.abs(amount)) + ' · ' + (payload.sub || payload.cat),
     { undo: function () { localDrop(payload.id); send('deleteExpense', payload.id, false); }, undone: 'Saisie annulée' });
 });
+
+// A forecast shows at once at the bottom of its month; the Sheets follows (saveForecast).
+function forecastPayload(r, ym) {
+  return { id: r.id, ym: ym, amount: r.debit || -r.credit, label: r.label, cat: r.cat, sub: r.sub, who: r.who, means: r.means };
+}
+function saveForecast(f, amount) {
+  var id = f.id || 'prev:' + crypto.randomUUID().slice(0, 8), old = localDrop(id), wasEdit = !!S.edit;
+  var row = { id: id, row: 0, date: '', means: old ? old.row.means : '', label: $('#label').value.trim() || f.sub || f.cat,
+    credit: amount < 0 ? -amount : 0, debit: amount > 0 ? amount : 0, cat: f.cat, sub: f.sub, who: f.who, forecast: true, envelope: false };
+  var m = S.data.months.filter(function (x) { return x.ym === f.ym; })[0];
+  localPut({ ym: f.ym, at: old && old.ym === f.ym ? old.at : m ? m.rows.length : 0, row: row });
+  send('saveForecast', forecastPayload(row, f.ym));
+  S.form = null; S.edit = null; S.tab = S.back;
+  render();
+  toast(wasEdit ? 'Opération à venir modifiée' : row.label + ' ajoutée à venir',
+    wasEdit ? {} : { undo: function () { localDrop(id); send('deleteExpense', id, false); }, undone: 'Ajout annulé' });
+}
 
 function exitEdit() { S.edit = null; S.form = null; S.tab = S.back; render(); }
 
@@ -431,8 +453,9 @@ function openPicker() {
 
 function confirmDelete() {
   var e = S.edit;
-  openSheet('Supprimer la dépense ?', '<div class="confirm"><div class="well">' + rowHtml(e, true).replace('<button class="row"', '<div class="row static"').replace(/<\/button>$/, '</div>') +
-    '</div><p>Elle part dans l\'onglet Corbeille du Sheets : tu pourras la récupérer depuis l\'écran du mois.</p><div class="actions">' +
+  var fc = S.form.forecast;
+  openSheet(fc ? 'Supprimer l\'opération à venir ?' : 'Supprimer la dépense ?', '<div class="confirm"><div class="well">' + rowHtml(e, !fc).replace('<button class="row"', '<div class="row static"').replace(/<\/button>$/, '</div>') +
+    '</div><p>' + (fc ? 'Elle disparaît du Sheets (« Annuler » juste après la remet).' : 'Elle part dans l\'onglet Corbeille du Sheets : tu pourras la récupérer depuis l\'écran du mois.') + '</p><div class="actions">' +
     '<button type="button" class="btn danger-fill" data-action="delete-yes">Supprimer</button>' +
     '<button type="button" class="btn" data-action="close-sheet">Garder</button></div></div>');
 }
@@ -460,11 +483,12 @@ function viewMonth() {
   var curve = Calc.balanceCurve(S.data, S.ym, today());
   out += acc('curve', 'Évolution du solde', curve.projection.length ? 'fin prévue ' + money0(curve.end) : 'fin ' + money0(curve.end), balanceChart(curve));
 
-  if (m.forecasts.length) {
+  if (m.forecasts.length || !past) {
     var debit = m.forecasts.reduce(function (s, r) { return s + r.debit; }, 0);
     var credit = m.forecasts.reduce(function (s, r) { return s + r.credit; }, 0);
-    out += acc('upcoming', 'À venir', money0(debit) + ' à sortir' + (credit ? ' · ' + money0(credit) + ' à recevoir' : ''),
-      '<ul class="well">' + m.forecasts.map(forecastRow).join('') + '</ul>');
+    out += acc('upcoming', 'À venir', m.forecasts.length ? money0(debit) + ' à sortir' + (credit ? ' · ' + money0(credit) + ' à recevoir' : '') : 'rien de prévu',
+      (m.forecasts.length ? '<ul class="well">' + m.forecasts.map(forecastRow).join('') + '</ul>' : '') +
+      (past ? '' : '<button type="button" class="btn importbtn" data-action="add-fc">' + icon('plus') + 'Prévoir une opération</button>'));
   }
   var plan = Calc.plan(S.data, S.ym);
   if (m.envelopes.length) {
@@ -616,7 +640,8 @@ function barHtml(key, title, value, max, extra, subs, over) {
 // ------------------------------------------------------------ upcoming (the bold lines of the month)
 function forecastRow(r) {
   var credit = r.credit > 0;
-  return '<li class="row static"><span class="emo">' + emojiOf(r.cat, r.sub) + '</span><span class="txt"><b>' + esc(r.label) + '</b><small>' +
+  return '<li class="row fc" data-action="edit-fc" data-id="' + esc(r.id) + '" role="button" tabindex="0"><span class="emo">' + emojiOf(r.cat, r.sub) +
+    '</span><span class="txt"><b>' + esc(r.label) + '</b><small>' +
     esc(r.sub || r.cat) + ' · ' + money(credit ? r.credit : r.debit) + (credit ? ' à recevoir' : '') + '</small></span>' +
     '<button type="button" class="pill passbtn" data-action="passed" data-id="' + esc(r.id) + '">C\'est passé</button></li>';
 }
@@ -914,8 +939,27 @@ document.addEventListener('click', function (ev) {
       S.form = { id: e.id, cat: e.cat, sub: e.sub, suggested: false, manual: true, who: e.who.slice(), means: meansOf(e.means), refund: e.amount < 0 };
       render(); window.scrollTo(0, 0); break;
     case 'cancel-edit': exitEdit(); break;
+    case 'add-fc':
+      S.back = S.tab; S.edit = null; S.tab = 'add';
+      S.form = Object.assign(newForm(), { forecast: true, ym: S.ym });
+      render(); window.scrollTo(0, 0); break;
+    case 'edit-fc':
+      var r = Calc.month(S.data, S.ym).forecasts.filter(function (x) { return x.id === t.dataset.id; })[0];
+      if (!r) return;
+      S.back = S.tab; S.tab = 'add';
+      S.edit = { id: r.id, amount: r.debit || -r.credit, label: r.label, cat: r.cat, sub: r.sub, who: r.who, date: '', forecast: true };
+      S.form = { id: r.id, cat: r.cat, sub: r.sub, suggested: false, manual: true, who: r.who.slice(), means: meansOf(r.means), refund: r.credit > 0,
+        forecast: true, ym: S.ym };
+      render(); window.scrollTo(0, 0); break;
     case 'delete': confirmDelete(); break;
     case 'delete-yes':
+      if (S.form.forecast) {
+        var fspot = localDrop(S.edit.id), fym = S.form.ym;
+        send('deleteExpense', S.edit.id, false);
+        closeSheet(); exitEdit();
+        toast('Opération à venir supprimée', { undo: function () { localPut(fspot); send('saveForecast', forecastPayload(fspot.row, fym)); }, undone: 'Opération remise' });
+        break;
+      }
       var gone = S.edit.id, spot = localDrop(gone);
       send('deleteExpense', gone);
       closeSheet(); exitEdit();

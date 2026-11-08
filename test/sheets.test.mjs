@@ -184,7 +184,7 @@ const env = (b, name, key) => loadCode(b).readMonth(b.getSheetByName(name)).rows
   const b = book(), code = loadCode(b), nov = b.getSheetByName('Novembre 2026');
   code.getData();
   nov.getRange(10, 1, 1, 11).setFontWeight('normal');
-  const first = code.getData(), second = code.getData();
+  const first = code.getData(true), second = code.getData(true);
   const line = (d) => d.months[0].rows.find((r) => r.id === 'env:Alimentation|');
   assert.equal(line(first).envelope, false);
   assert.equal(line(first).forecast, false);
@@ -215,17 +215,50 @@ const env = (b, name, key) => loadCode(b).readMonth(b.getSheetByName(name)).rows
   nov.getRange(101, 1, 1, 5).setValues([[d('2026-11-06'), '', 'Tapé à la main', '', 500]]);
   nov.insertRowAfter(5);
   nov.getRange(6, 1, 1, 5).setValues([[d('2026-11-03'), '', 'Inséré à la main', '', 10]]);
-  const data = code.getData();
+  const data = code.getData(true);
   const dec = b.getSheetByName('Décembre 2026'), nm = data.months.find((m) => m.ym === '2026-11');
   const expected = Math.round((nm.opening + nm.rows.reduce((s, r) => s + r.credit - r.debit, 0)) * 100) / 100;
   assert.equal(dec.peek(1, 6).f, "='Novembre 2026'!F102");
   assert.equal(Math.round(dec.value(1, 6) * 100) / 100, expected);
 }
 {
-  // I3: a date far in the future is refused instead of creating a year of tabs.
+  // I3: months can be prepared up to a year ahead (with the months between); further is refused.
   const b = book(), code = loadCode(b), tabs = b.getSheets().length;
-  assert.throws(() => code.saveExpense({ date: '2027-11-02', amount: 5, cat: 'Loisirs', sub: 'Sport', label: 'x', who: ['Foyer'] }), /trop loin/);
+  assert.throws(() => code.saveExpense({ date: '2027-12-02', amount: 5, cat: 'Loisirs', sub: 'Sport', label: 'x', who: ['Foyer'] }), /trop loin/);
   assert.equal(b.getSheets().length, tabs);
+  const data = code.prepareMonth('2027-02');
+  assert.deepEqual(['Décembre 2026', 'Janvier 2027', 'Février 2027'].map((n) => !!b.getSheetByName(n)), [true, true, true]);
+  assert.ok(data.months.some((m) => m.ym === '2027-02'));
+}
+{
+  // Forecasts ("À venir") are added, edited and deleted from the app: bold lines without a date at the bottom of their month.
+  const b = book(), code = loadCode(b), nov = b.getSheetByName('Novembre 2026');
+  const fc = (id) => code.readMonth(nov).rows.find((r) => r.id === id);
+  const data = code.saveForecast({ id: 'prev:new1', ym: '2026-11', amount: 40, label: 'Vétérinaire', cat: 'Loisirs', sub: 'Sport', who: ['Foyer'] });
+  assert.ok(data.months.some((m) => m.rows.some((r) => r.id === 'prev:new1')), 'fresh data comes back');
+  assert.deepEqual([fc('prev:new1').forecast, fc('prev:new1').debit, fc('prev:new1').date], [true, 40, '']);
+  const rows = code.readMonth(nov).rows;
+  assert.equal(rows[rows.length - 1].id, 'prev:new1', 'at the bottom of the month');
+  code.saveForecast({ id: 'prev:new1', ym: '2026-11', amount: -55, label: 'Mutuelle', cat: 'Loisirs', sub: 'Sport', who: ['Foyer'] });
+  assert.deepEqual([fc('prev:new1').forecast, fc('prev:new1').credit, fc('prev:new1').debit, fc('prev:new1').label], [true, 55, 0, 'Mutuelle']);
+  assert.equal(code.readMonth(nov).rows.length, rows.length, 'edited in place');
+  code.deleteExpense('prev:new1', false);
+  assert.equal(fc('prev:new1'), undefined);
+  assert.throws(() => code.saveForecast({ id: 'a2', ym: '2026-11', amount: 5, label: 'x', cat: 'Loisirs', sub: 'Sport', who: ['Foyer'] }), /déjà passée/);
+}
+{
+  // getData is served from the cache until a write, an edit by hand (onEdit) or a pull to refresh (fresh).
+  const b = book(), code = loadCode(b), nov = b.getSheetByName('Novembre 2026');
+  const label = (data) => data.months.find((m) => m.ym === '2026-11').rows.find((r) => r.row === 6).label;
+  code.getData();
+  nov.getRange(6, 3).setValue('Changé à la main');
+  assert.notEqual(label(code.getData()), 'Changé à la main', 'served from the cache');
+  assert.equal(label(code.getData(true)), 'Changé à la main', 'a pull reads the Sheets');
+  nov.getRange(6, 3).setValue('Encore');
+  code.onEdit({ range: nov.getRange(6, 3) });
+  assert.equal(label(code.getData()), 'Encore', 'an edit by hand clears the cache');
+  const id = code.saveExpense({ date: '2026-11-06', amount: 3, cat: 'Loisirs', sub: 'Sport', label: 'Écrit', who: ['Foyer'] }).saved;
+  assert.ok(code.getData().months.some((m) => m.rows.some((r) => r.id === id)), 'a write clears the cache');
 }
 {
   // M5: "C'est passé" with a date in a past month without a tab is refused.
