@@ -43,7 +43,8 @@ var ICONS = {
 function icon(name, cls) { return '<svg class="ic' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" aria-hidden="true">' + ICONS[name] + '</svg>'; }
 // Same bar on every page: title, sync dot, and the month (or period) selector always at the same place.
 function topbar(title, right) {
-  return '<header class="topbar"><h1>' + esc(title) + '<span class="sync" title="Mise à jour depuis le Sheets"' + (S.syncing ? '' : ' hidden') + '></span></h1>' +
+  return '<header class="topbar"><h1>' + esc(title) + '<span class="sync" title="Mise à jour depuis le Sheets"' + (S.syncing ? '' : ' hidden') + '></span>' +
+    '<span class="ptr' + (S.pulling ? ' go' : '') + '" aria-hidden="true"></span></h1>' +
     '<div class="topright">' + themeButton() + (right === undefined ? stepper('month', S.tab === 'dash' ? periodLabel(S.dash.kind, S.ym) : monthName(S.ym), shortLabel()) : right) +
     '</div></header>';
 }
@@ -200,28 +201,29 @@ document.addEventListener('visibilitychange', function () {
 window.addEventListener('online', function () { if (S.data) load(true); });
 
 // Pull down from the top to re-read the Sheets: an app opened from the home screen has no browser refresh.
-var pull = { y: null, d: 0 }, ptr = $('#ptr');
+// A ring next to the sync dot in the top bar turns with the pull, then spins while the Sheets is read.
+var pull = { y: null, d: 0 };
+function ptr() { return $('.topbar .ptr'); }
 document.addEventListener('touchstart', function (ev) {
   pull.d = 0;
   pull.y = standalone() && window.scrollY <= 0 && S.data && !sheetEl.open && !S.syncing ? ev.touches[0].clientY : null;
-  var bar = $('.topbar');
-  if (pull.y != null && bar) ptr.style.top = bar.getBoundingClientRect().bottom + 'px';
 }, { passive: true });
 document.addEventListener('touchmove', function (ev) {
-  if (pull.y == null) return;
+  var el = ptr();
+  if (pull.y == null || !el) return;
   pull.d = Math.max(0, ev.touches[0].clientY - pull.y);
   var k = Math.min(pull.d, 100) / 100;
-  ptr.style.transition = 'none';
-  ptr.style.opacity = k;
-  ptr.style.transform = 'translateY(' + (k * 66 - 50) + 'px) rotate(' + pull.d * 3 + 'deg)';
+  el.style.display = 'block'; el.style.opacity = k;
+  el.style.transform = 'rotate(' + pull.d * 3 + 'deg) scale(' + (0.5 + k / 2) + ')';
 }, { passive: true });
 document.addEventListener('touchend', function () {
+  var el = ptr();
   if (pull.y == null) return;
-  pull.y = null; ptr.style.transition = '';
-  var done = function () { ptr.classList.remove('go'); ptr.style.opacity = 0; ptr.style.transform = ''; };
-  if (pull.d < 100) return done();
-  ptr.classList.add('go'); ptr.style.transform = 'translateY(16px)';
-  load(false, true).then(done);
+  pull.y = null;
+  if (el) el.removeAttribute('style');
+  if (pull.d < 100) return;
+  S.pulling = true; if (el) el.classList.add('go');
+  load(false, true).then(function () { S.pulling = false; var e = ptr(); if (e) e.classList.remove('go'); });
 });
 
 function toast(msg, opts) {

@@ -499,10 +499,7 @@ select.input{appearance:none;padding-right:34px;background-image:linear-gradient
 @media (prefers-reduced-motion:reduce){ *,*::backdrop{animation:none !important;transition:none !important} }
 
 /* Pull to refresh */
-/* Part of the page, so it follows iOS's bounce; it slides out from under the top bar (set at the pull's start). */
-#ptr{position:absolute;left:50%;top:60px;z-index:5;width:36px;height:36px;margin-left:-18px;border-radius:50%;
-  background:var(--surface);box-shadow:0 4px 14px rgba(20,10,60,.18);opacity:0;transform:translateY(-50px);pointer-events:none;
-  transition:opacity .2s,transform .2s}
-#ptr::after{content:"";position:absolute;inset:0;margin:auto;width:16px;height:16px;border-radius:50%;
-  border:2.5px solid var(--accent);border-right-color:transparent}
-#ptr.go::after{animation:spin .7s linear infinite}
+.ptr{width:16px;height:16px;flex:none;border-radius:50%;border:2.5px solid var(--accent);border-right-color:transparent;display:none}
+.ptr.go{display:block;animation:spin .7s linear infinite}
+/* Google's button is a light page in a frame: on a dark page the browser would paint a white box behind it. */
+#gbtn iframe{color-scheme:light}
