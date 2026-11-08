@@ -61,7 +61,7 @@ button{font:inherit;color:inherit}
 
 /* ------------------------------------------------------------ navigation: bottom bar, left rail on a computer */
 .nav{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;justify-content:space-around;gap:2px;
-  padding:8px 6px calc(8px + env(safe-area-inset-bottom));background:var(--surface);box-shadow:0 -6px 16px var(--shadow-dark)}
+  padding:8px 6px max(8px, calc(env(safe-area-inset-bottom) - 20px));background:var(--surface);box-shadow:0 -6px 16px var(--shadow-dark)}
 .nav .brand{display:none}
 .nav button{flex:1;display:flex;flex-direction:column;align-items:center;gap:3px;padding:7px 2px;border:0;border-radius:var(--r-md);
   background:none;font:600 11px/1.1 Inter,sans-serif;color:var(--muted);cursor:pointer;transition:box-shadow var(--press),color var(--smooth)}
@@ -278,6 +278,7 @@ select.input{appearance:none;padding-right:34px;background-image:linear-gradient
 
 /* ------------------------------------------------------------ add */
 .form{display:flex;flex-direction:column;gap:28px}
+.form .kind{margin-bottom:-14px}
 .amount{display:flex;align-items:baseline;justify-content:center;gap:6px;padding:20px 22px;border-radius:var(--r-xl);box-shadow:var(--inset)}
 .amount input{width:100%;min-width:0;border:0;background:none;text-align:right;font:800 46px/1 Nunito,sans-serif;color:var(--text);
   font-variant-numeric:tabular-nums}

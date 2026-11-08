@@ -197,16 +197,17 @@ function rowHtml(e, withDate) {
 }
 
 // ------------------------------------------------------------ add / edit
-function newForm() { return { id: null, cat: '', sub: '', suggested: false, manual: false, who: [S.data.people[0]], means: { kind: 'cb', raw: '' } }; }
+function newForm() { return { id: null, cat: '', sub: '', suggested: false, manual: false, who: [S.data.people[0]], means: { kind: 'cb', raw: '' }, refund: false }; }
 
 function viewAdd() {
   var e = S.edit;
   if (!S.form) S.form = newForm();
   return '<form class="form" id="f" novalidate>' +
-    topbar(e ? 'Modifier la dépense' : 'Nouvelle dépense', '<button type="button" class="iconbtn" data-action="cancel-edit" aria-label="' +
+    topbar(e ? 'Modifier' : 'Ajouter', '<button type="button" class="iconbtn" data-action="cancel-edit" aria-label="' +
       (e ? 'Annuler la modification' : 'Fermer') + '">' + icon('close') + '</button>') +
+    '<div class="seg wide kind" id="kind">' + kindButtons() + '</div>' +
     '<label class="amount" id="amountbox"><input id="amount" inputmode="decimal" enterkeyhint="next" placeholder="0,00" autocomplete="off" aria-label="Montant en euros" value="' +
-    (e ? String(e.amount).replace('.', ',') : '') + '"><span>€</span></label>' +
+    (e ? String(Math.abs(e.amount)).replace('.', ',') : '') + '"><span>€</span></label>' +
     '<div class="field"><label class="l" for="label">Libellé <span>facultatif</span></label>' +
     '<input id="label" class="input" list="labels" enterkeyhint="done" autocomplete="off" placeholder="Carrefour, pharmacie…" value="' + (e ? esc(e.label) : '') + '">' +
     '<datalist id="labels"></datalist></div>' +
@@ -217,6 +218,13 @@ function viewAdd() {
     '<div class="actions"><button class="btn primary" id="submit">' + (e ? 'Enregistrer' : 'Ajouter') + '</button>' +
     (e ? '<button type="button" class="btn danger" data-action="delete">Supprimer</button>' : '') + '</div></form>' +
     (e ? '' : '<section class="field"><h2>Dernières dépenses</h2><div class="well" id="recent"></div></section>');
+}
+
+// An expense goes in Débit, a refund in Crédit (sent as a negative amount).
+function kindButtons() {
+  return [[false, 'Dépense'], [true, 'Remboursement']].map(function (k) {
+    return '<button type="button" data-action="kind" data-refund="' + k[0] + '" aria-pressed="' + (S.form.refund === k[0]) + '">' + k[1] + '</button>';
+  }).join('');
 }
 
 function paintAdd() { paintCat(); paintWho(); paintMeans(); paintLists(); }
@@ -310,7 +318,7 @@ document.addEventListener('keydown', function (ev) {
 document.addEventListener('submit', function (ev) {
   if (ev.target.id !== 'f') return;
   ev.preventDefault();
-  var f = S.form, amount = dec($('#amount').value);
+  var f = S.form, amount = Math.abs(dec($('#amount').value)) * (f.refund ? -1 : 1);
   if (!isFinite(amount) || amount === 0) { $('#amountbox').setAttribute('aria-invalid', 'true'); $('#amount').focus(); return; }
   if (!f.cat) { $('#catbtn').classList.add('bad'); openPicker(); return; }
   if ($('#chequeno')) f.means.number = $('#chequeno').value.trim();
@@ -324,8 +332,8 @@ document.addEventListener('submit', function (ev) {
     S.edit = null; S.tab = S.back;
     S.data = d; S.loadedAt = Date.now();
     render();
-    if (wasEdit) toast('Dépense modifiée');
-    else toast(money(amount) + ' · ' + (payload.sub || payload.cat), { undo: ['deleteExpense', d.saved, false], undone: 'Saisie annulée' });
+    if (wasEdit) toast(amount < 0 ? 'Remboursement modifié' : 'Dépense modifiée');
+    else toast((amount < 0 ? '+' : '') + money(Math.abs(amount)) + ' · ' + (payload.sub || payload.cat), { undo: ['deleteExpense', d.saved, false], undone: 'Saisie annulée' });
   }).catch(function (e) { btn.disabled = false; fail(e); });
 });
 
@@ -832,6 +840,7 @@ document.addEventListener('click', function (ev) {
     case 'means':
       if ($('#chequeno')) f.means.number = $('#chequeno').value.trim();
       f.means.kind = t.dataset.kind; paintMeans(); if ($('#chequeno')) $('#chequeno').focus(); break;
+    case 'kind': f.refund = t.dataset.refund === 'true'; $('#kind').innerHTML = kindButtons(); break;
     case 'who':
       // Toggle, keeping at least one person and the order of the Personnes tab.
       var p = t.dataset.person, on = f.who.indexOf(p) >= 0;
@@ -842,7 +851,7 @@ document.addEventListener('click', function (ev) {
       var e = realRows().filter(function (x) { return x.id === t.dataset.id; })[0];
       if (!e) return;
       S.back = S.tab; S.edit = e; S.tab = 'add';
-      S.form = { id: e.id, cat: e.cat, sub: e.sub, suggested: false, manual: true, who: e.who.slice(), means: meansOf(e.means) };
+      S.form = { id: e.id, cat: e.cat, sub: e.sub, suggested: false, manual: true, who: e.who.slice(), means: meansOf(e.means), refund: e.amount < 0 };
       render(); window.scrollTo(0, 0); break;
     case 'cancel-edit': exitEdit(); break;
     case 'delete': confirmDelete(); break;
