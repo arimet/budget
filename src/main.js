@@ -118,7 +118,7 @@ function lock(message) {
   try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(OLD_PW_KEY); localStorage.removeItem(CACHE_KEY); } catch (e) { /* private mode: nothing stored */ }
   S.token = ''; S.data = null;
   document.body.classList.add('locked');
-  view.innerHTML = '<div class="gate"><span class="mark big">€</span><h1>Budget du foyer</h1>' +
+  view.innerHTML = '<div class="gate"><span class="mark big"><img src="./icon.svg" alt=""></span><h1>Budget du foyer</h1>' +
     '<p>Connecte-toi avec le compte Google avec lequel le Sheets du budget est partagé.</p>' +
     '<div id="gbtn" class="gbtn"></div><p class="gate-err" id="gate-err" role="alert">' + esc(message || '') + '</p></div>';
   renderGoogleButton();
