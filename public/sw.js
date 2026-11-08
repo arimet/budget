@@ -1,6 +1,6 @@
 // Offline shell: the app opens without network (pages and assets from the cache, refreshed in the background).
 // Data never goes through here: calls to the Apps Script API are POST requests, always sent to the network.
-const CACHE = 'budget-shell-v2';
+const CACHE = 'budget-shell-v3';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-192.png', './icon-512.png', './icon-180.png', './icon.svg'];
 
 self.addEventListener('install', (e) => {
