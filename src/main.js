@@ -88,7 +88,7 @@ function post(body) {
   return fetch(API_URL, { method: 'POST', body: JSON.stringify(body) }).then(function (r) {
     if (!r.ok) throw new Error('Le serveur ne répond pas (' + r.status + ').');
     return r.json();
-  }, function () { throw new Error('Pas de connexion. Réessaie dans un instant.'); });
+  }, function () { var e = new Error('Pas de connexion. Réessaie dans un instant.'); e.offline = true; throw e; });
 }
 function call(fn) {
   var args = [].slice.call(arguments, 1);
@@ -99,10 +99,11 @@ function call(fn) {
   });
 }
 // The last data shown is kept on the device: the app opens on it at once, then refreshes from the Sheets.
-function load() {
+// `quiet`: a refresh in the background stays silent when the network is not back yet (the data shown is kept).
+function load(quiet) {
   S.syncing = true; paintSync();
   return call('getData').then(function (d) { if (!waiting) store(d); })
-    .catch(fail).then(function () { S.syncing = waiting > 0; paintSync(); });
+    .catch(function (e) { if (!(quiet && e.offline && S.data)) fail(e); }).then(function () { S.syncing = waiting > 0; paintSync(); });
 }
 function store(d) { setData(d); try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) { /* full or private */ } }
 
@@ -193,7 +194,31 @@ function signIn(credential) {
 
 // Coming back to the app re-reads the spreadsheet, so edits made by hand show up.
 document.addEventListener('visibilitychange', function () {
-  if (document.visibilityState === 'visible' && S.data && Date.now() - S.loadedAt > 20000) load();
+  if (document.visibilityState === 'visible' && S.data && Date.now() - S.loadedAt > 20000) load(true);
+});
+window.addEventListener('online', function () { if (S.data) load(true); });
+
+// Pull down from the top to re-read the Sheets: an app opened from the home screen has no browser refresh.
+var pull = { y: null, d: 0 }, ptr = $('#ptr');
+document.addEventListener('touchstart', function (ev) {
+  pull.d = 0;
+  pull.y = standalone() && window.scrollY <= 0 && S.data && !sheetEl.open && !S.syncing ? ev.touches[0].clientY : null;
+}, { passive: true });
+document.addEventListener('touchmove', function (ev) {
+  if (pull.y == null) return;
+  pull.d = Math.max(0, ev.touches[0].clientY - pull.y);
+  var k = Math.min(pull.d, 100) / 100;
+  ptr.style.transition = 'none';
+  ptr.style.opacity = k;
+  ptr.style.transform = 'translateY(' + (k * 60 - 50) + 'px) rotate(' + pull.d * 3 + 'deg)';
+}, { passive: true });
+document.addEventListener('touchend', function () {
+  if (pull.y == null) return;
+  pull.y = null; ptr.style.transition = '';
+  var done = function () { ptr.classList.remove('go'); ptr.style.opacity = 0; ptr.style.transform = ''; };
+  if (pull.d < 100) return done();
+  ptr.classList.add('go');
+  load().then(done);
 });
 
 function toast(msg, opts) {
@@ -942,7 +967,7 @@ if (/[?&]add\b/.test(location.search)) { S.tab = 'add'; S.back = 'month'; histor
 if (token()) {
   document.body.classList.remove('locked');
   try { var cached = JSON.parse(localStorage.getItem(CACHE_KEY) || 'null'); if (cached && cached.months) setData(cached); } catch (e) { /* no cache */ }
-  load();
+  load(true);
 } else lock();
 
 // Install: Android/desktop Chrome offer a prompt we can trigger; iPhone needs Safari's Share → Sur l'écran d'accueil.
