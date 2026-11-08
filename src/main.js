@@ -101,8 +101,40 @@ function call(fn) {
 // The last data shown is kept on the device: the app opens on it at once, then refreshes from the Sheets.
 function load() {
   S.syncing = true; paintSync();
-  return call('getData').then(function (d) { setData(d); try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) { /* full or private */ } })
-    .catch(fail).then(function () { S.syncing = false; paintSync(); });
+  return call('getData').then(function (d) { if (!waiting) store(d); })
+    .catch(fail).then(function () { S.syncing = waiting > 0; paintSync(); });
+}
+function store(d) { setData(d); try { localStorage.setItem(CACHE_KEY, JSON.stringify(d)); } catch (e) { /* full or private */ } }
+
+// Optimistic writes: the screen changes at once, the Sheets follows in the background, one call at a time.
+// An answer is applied only when nothing else is waiting, so it never undoes a newer local change; a failure reloads the Sheets.
+var queue = Promise.resolve(), waiting = 0;
+function send() {
+  var args = arguments;
+  waiting++; S.syncing = true; paintSync();
+  queue = queue.then(function () { return call.apply(null, args); }).then(function (d) {
+    if (--waiting) return;
+    S.syncing = false; paintSync(); store(d);
+  }, function (e) {
+    fail(e);
+    if (!--waiting) load();
+  });
+}
+// Local copies of what the Sheets will do with a real line: take it out (returns where it was), put it back.
+function localDrop(id) {
+  for (var i = 0; i < S.data.months.length; i++) {
+    var rows = S.data.months[i].rows;
+    for (var j = 0; j < rows.length; j++) if (rows[j].id === id) return { ym: S.data.months[i].ym, at: j, row: rows.splice(j, 1)[0] };
+  }
+  return null;
+}
+function localPut(spot) {
+  var m = spot && S.data.months.filter(function (x) { return x.ym === spot.ym; })[0];
+  if (!m) return;
+  // Real lines sit above the forecasts (bold rows); a new one goes last among them.
+  var at = spot.at;
+  if (at == null) { at = m.rows.findIndex(function (r) { return r.forecast; }); if (at < 0) at = m.rows.length; }
+  m.rows.splice(at, 0, spot.row);
 }
 function paintSync() { var el = $('.sync'); if (el) el.hidden = !S.syncing; }
 function setData(d) {
@@ -169,7 +201,7 @@ function toast(msg, opts) {
   var t = $('#toast');
   t.className = 'on' + (opts.error ? ' err' : '');
   t.innerHTML = '<span>' + esc(msg) + '</span>' + (opts.undo ? '<button data-action="undo">Annuler</button>' : '');
-  S.undo = opts.undo ? { call: opts.undo, msg: opts.undone } : null;
+  S.undo = opts.undo ? { run: opts.undo, msg: opts.undone } : null;
   clearTimeout(S.toastTimer);
   S.toastTimer = setTimeout(function () { t.className = ''; }, opts.error ? 7000 : 4500);
 }
@@ -324,19 +356,18 @@ document.addEventListener('submit', function (ev) {
   if (!isFinite(amount) || amount === 0) { $('#amountbox').setAttribute('aria-invalid', 'true'); $('#amount').focus(); return; }
   if (!f.cat) { $('#catbtn').classList.add('bad'); openPicker(); return; }
   if ($('#chequeno')) f.means.number = $('#chequeno').value.trim();
-  var payload = { id: f.id, date: $('#date').value || today(), amount: amount, cat: f.cat, sub: f.sub, means: meansText(f, $('#date').value),
+  var payload = { id: f.id || crypto.randomUUID().slice(0, 8), date: $('#date').value || today(), amount: amount, cat: f.cat, sub: f.sub, means: meansText(f, $('#date').value),
     label: $('#label').value.trim(), who: f.who };
-  var btn = $('#submit');
-  busy(btn, true);
-  call('saveExpense', payload).then(function (d) {
-    var wasEdit = !!S.edit;
-    S.form = null;
-    S.edit = null; S.tab = S.back;
-    S.data = d; S.loadedAt = Date.now();
-    render();
-    if (wasEdit) toast(amount < 0 ? 'Remboursement modifié' : 'Dépense modifiée');
-    else toast((amount < 0 ? '+' : '') + money(Math.abs(amount)) + ' · ' + (payload.sub || payload.cat), { undo: ['deleteExpense', d.saved, false], undone: 'Saisie annulée' });
-  }).catch(function (e) { busy(btn, false); fail(e); });
+  var wasEdit = !!S.edit, old = localDrop(payload.id);
+  localPut({ ym: payload.date.slice(0, 7), at: old && old.ym === payload.date.slice(0, 7) ? old.at : null, row: { id: payload.id, row: 0, date: payload.date,
+    means: payload.means, label: payload.label || payload.sub || payload.cat, credit: amount < 0 ? -amount : 0, debit: amount > 0 ? amount : 0,
+    cat: payload.cat, sub: payload.sub, who: payload.who, forecast: false, envelope: false } });
+  send('saveExpense', payload);
+  S.form = null; S.edit = null; S.tab = S.back;
+  render();
+  if (wasEdit) toast(amount < 0 ? 'Remboursement modifié' : 'Dépense modifiée');
+  else toast((amount < 0 ? '+' : '') + money(Math.abs(amount)) + ' · ' + (payload.sub || payload.cat),
+    { undo: function () { localDrop(payload.id); send('deleteExpense', payload.id, false); }, undone: 'Saisie annulée' });
 });
 
 function exitEdit() { S.edit = null; S.form = null; S.tab = S.back; render(); }
@@ -844,10 +875,10 @@ document.addEventListener('click', function (ev) {
       f.means.kind = t.dataset.kind; paintMeans(); if ($('#chequeno')) $('#chequeno').focus(); break;
     case 'kind': f.refund = t.dataset.refund === 'true'; $('#kind').innerHTML = kindButtons(); break;
     case 'who':
-      // Toggle, keeping at least one person and the order of the Personnes tab.
-      var p = t.dataset.person, on = f.who.indexOf(p) >= 0;
+      // The household (first of the Personnes tab) and named people exclude each other; people combine, at least one stays.
+      var p = t.dataset.person, home = S.data.people[0], on = f.who.indexOf(p) >= 0;
       if (on && f.who.length === 1) return;
-      f.who = S.data.people.filter(function (x) { return x === p ? !on : f.who.indexOf(x) >= 0; });
+      f.who = p === home ? [home] : S.data.people.filter(function (x) { return x !== home && (x === p ? !on : f.who.indexOf(x) >= 0); });
       paintWho(); break;
     case 'edit':
       var e = realRows().filter(function (x) { return x.id === t.dataset.id; })[0];
@@ -858,14 +889,14 @@ document.addEventListener('click', function (ev) {
     case 'cancel-edit': exitEdit(); break;
     case 'delete': confirmDelete(); break;
     case 'delete-yes':
-      busy(t, true);
-      var gone = S.edit.id;
-      call('deleteExpense', gone).then(function (d) { closeSheet(); S.data = d; exitEdit(); toast('Dépense supprimée', { undo: ['restoreExpense', gone], undone: 'Ligne récupérée' }); })
-        .catch(function (e) { busy(t, false); fail(e); }); break;
+      var gone = S.edit.id, spot = localDrop(gone);
+      send('deleteExpense', gone);
+      closeSheet(); exitEdit();
+      toast('Dépense supprimée', { undo: function () { localPut(spot); send('restoreExpense', gone); }, undone: 'Ligne récupérée' }); break;
     case 'undo':
       var u = S.undo;
       $('#toast').className = '';
-      call.apply(null, u.call).then(function (d) { setData(d); toast(u.msg); }).catch(fail); break;
+      u.run(); render(true); toast(u.msg); break;
     case 'add':
       if (S.tab === 'add') return;
       S.back = S.tab; S.edit = null; S.form = null; S.tab = 'add'; render(); window.scrollTo(0, 0); break;

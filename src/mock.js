@@ -10,7 +10,7 @@ const ymOf = (back) => { const d = new Date(now.getFullYear(), now.getMonth() - 
 const book = new Book();
 const code = loadCodeFrom(gs, book, today);
 const DEF = new Function(gs + ';return { categories: DEFAULT_CATEGORIES, people: DEFAULT_PEOPLE };')();
-book.add('Personnes', [['Nom']].concat(DEF.people.map((p) => [p])));
+book.add('Personnes', [['Nom']].concat(DEF.people.concat(['Alex', 'Camille']).map((p) => [p])));
 book.add('Catégories', [['Catégorie', 'Sous-catégorie', 'Emoji', 'Mots-clés']]
   .concat([['Revenus', '💶', [['Salaires', 'salaire, virement employeur']]]].concat(DEF.categories)
     .flatMap(([cat, emoji, subs]) => subs.map(([sub, kw]) => [cat, sub, emoji, kw]))));
