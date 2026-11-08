@@ -111,6 +111,8 @@ function setData(d) {
   if (!S.ym) S.ym = d.today.slice(0, 7);
   render(true);
 }
+// A button waiting on the Sheets: disabled, with a spinner in place of its label.
+function busy(b, on) { b.disabled = on; if (on) b.setAttribute('aria-busy', 'true'); else b.removeAttribute('aria-busy'); }
 function fail(e) { toast((e && e.message) || String(e), { error: true }); }
 
 // ------------------------------------------------------------ Google sign-in gate
@@ -118,7 +120,7 @@ function lock(message) {
   try { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(OLD_PW_KEY); localStorage.removeItem(CACHE_KEY); } catch (e) { /* private mode: nothing stored */ }
   S.token = ''; S.data = null;
   document.body.classList.add('locked');
-  view.innerHTML = '<div class="gate"><span class="mark big"><img src="./icon.svg" alt=""></span><h1>Budget du foyer</h1>' +
+  view.innerHTML = '<div class="gate"><span class="mark big"><img src="./icon.svg?v=2" alt=""></span><h1>Budget du foyer</h1>' +
     '<p>Connecte-toi avec le compte Google avec lequel le Sheets du budget est partagé.</p>' +
     '<div id="gbtn" class="gbtn"></div><p class="gate-err" id="gate-err" role="alert">' + esc(message || '') + '</p></div>';
   renderGoogleButton();
@@ -325,7 +327,7 @@ document.addEventListener('submit', function (ev) {
   var payload = { id: f.id, date: $('#date').value || today(), amount: amount, cat: f.cat, sub: f.sub, means: meansText(f, $('#date').value),
     label: $('#label').value.trim(), who: f.who };
   var btn = $('#submit');
-  btn.disabled = true;
+  busy(btn, true);
   call('saveExpense', payload).then(function (d) {
     var wasEdit = !!S.edit;
     S.form = null;
@@ -334,7 +336,7 @@ document.addEventListener('submit', function (ev) {
     render();
     if (wasEdit) toast(amount < 0 ? 'Remboursement modifié' : 'Dépense modifiée');
     else toast((amount < 0 ? '+' : '') + money(Math.abs(amount)) + ' · ' + (payload.sub || payload.cat), { undo: ['deleteExpense', d.saved, false], undone: 'Saisie annulée' });
-  }).catch(function (e) { btn.disabled = false; fail(e); });
+  }).catch(function (e) { busy(btn, false); fail(e); });
 });
 
 function exitEdit() { S.edit = null; S.form = null; S.tab = S.back; render(); }
@@ -856,10 +858,10 @@ document.addEventListener('click', function (ev) {
     case 'cancel-edit': exitEdit(); break;
     case 'delete': confirmDelete(); break;
     case 'delete-yes':
-      t.disabled = true;
+      busy(t, true);
       var gone = S.edit.id;
       call('deleteExpense', gone).then(function (d) { closeSheet(); S.data = d; exitEdit(); toast('Dépense supprimée', { undo: ['restoreExpense', gone], undone: 'Ligne récupérée' }); })
-        .catch(function (e) { t.disabled = false; fail(e); }); break;
+        .catch(function (e) { busy(t, false); fail(e); }); break;
     case 'undo':
       var u = S.undo;
       $('#toast').className = '';
@@ -868,14 +870,14 @@ document.addEventListener('click', function (ev) {
       if (S.tab === 'add') return;
       S.back = S.tab; S.edit = null; S.form = null; S.tab = 'add'; render(); window.scrollTo(0, 0); break;
     case 'restore':
-      t.disabled = true;
-      call('restoreExpense', t.dataset.id).then(function (d) { setData(d); toast('Ligne récupérée'); }).catch(function (e) { t.disabled = false; fail(e); }); break;
+      busy(t, true);
+      call('restoreExpense', t.dataset.id).then(function (d) { setData(d); toast('Ligne récupérée'); }).catch(function (e) { busy(t, false); fail(e); }); break;
     case 'import-yes':
       var acts = importActions();
       if (!acts.length) { closeSheet(); return; }
-      t.disabled = true;
+      busy(t, true);
       call('importBank', acts).then(function (d) { closeSheet(); setData(d); toast(acts.length + ' ligne' + (acts.length > 1 ? 's' : '') + ' mise' + (acts.length > 1 ? 's' : '') + ' à jour'); })
-        .catch(function (e) { t.disabled = false; fail(e); }); break;
+        .catch(function (e) { busy(t, false); fail(e); }); break;
     case 'month-prev': case 'month-next':
       var step = S.tab === 'dash' ? { month: 1, quarter: 3, year: 12 }[S.dash.kind] : 1;
       S.ym = Calc.addMonths(S.ym, a === 'month-prev' ? -step : step); render(); break;
@@ -890,16 +892,16 @@ document.addEventListener('click', function (ev) {
     case 'dash-evo': S.dash.evo = t.dataset.evo; render(); break;
     case 'toggle': S.open[t.dataset.key] = !S.open[t.dataset.key]; render(); break;
     case 'prepare-month':
-      t.disabled = true;
-      call('prepareMonth', S.ym).then(function (d) { setData(d); toast(monthName(S.ym) + ' préparé'); }).catch(function (e) { t.disabled = false; fail(e); });
+      busy(t, true);
+      call('prepareMonth', S.ym).then(function (d) { setData(d); toast(monthName(S.ym) + ' préparé'); }).catch(function (e) { busy(t, false); fail(e); });
       break;
     case 'passed': openPassed(t.dataset.id); break;
     case 'passed-yes':
       var amount = dec($('#ps-amount').value), date = $('#ps-date').value;
       if (!isFinite(amount) || amount <= 0) { $('#ps-amount').closest('.unit').setAttribute('aria-invalid', 'true'); $('#ps-amount').focus(); return; }
-      t.disabled = true;
+      busy(t, true);
       call('markPassed', t.dataset.id, amount, date).then(function (d) { closeSheet(); setData(d); toast('Passé en opération'); })
-        .catch(function (e) { t.disabled = false; fail(e); });
+        .catch(function (e) { busy(t, false); fail(e); });
       break;
   }
 });
