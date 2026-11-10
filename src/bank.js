@@ -45,13 +45,13 @@ function words(s) { return Calc.norm(s).split(' ').filter(function (w) { return 
 
 // Bank lines against the Sheets, in passes so a loose match never takes a row an exact one needs:
 // known (same amount, close date), differs (same name, close date, other amount or date), toPass (a forecast that went
-// through), missing; then waiting = forecasts not passed. `ym`: only that month's lines (the others count as skipped).
+// through), missing; then waiting = forecasts not passed. `ym`: only lines dated in that month, 1st to last day (the others count as skipped).
 function reconcile(data, ops, ym) {
   var tabs = {}, used = {}, out = { known: [], differs: [], toPass: [], missing: [], waiting: [], skipped: 0 };
   data.months.forEach(function (m) { tabs[m.ym] = m; });
   var todo = [], seen = {};
   ops.forEach(function (op) {
-    var m = ym ? (op.date.slice(0, 7) === ym || op.posted.slice(0, 7) === ym ? tabs[ym] : null) : tabs[op.date.slice(0, 7)] || tabs[op.posted.slice(0, 7)];
+    var m = ym ? (op.date.slice(0, 7) === ym ? tabs[ym] : null) : tabs[op.date.slice(0, 7)] || tabs[op.posted.slice(0, 7)];
     if (!m) { out.skipped++; return; }
     seen[m.ym] = m;
     todo.push({ op: op, m: m });

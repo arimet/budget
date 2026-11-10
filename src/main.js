@@ -711,7 +711,8 @@ function viewBank() {
   }).join(''));
   out += section('Opérations manquantes', 'à ajouter', r.missing.map(function (m, i) {
     return line('add', i, m.op.merchant, shortDate(m.op.date) + ' · ' + money2(m.op.amount),
-      '<select class="input impcat" data-impcat="' + i + '">' + catOptions(m.cat, m.sub) + '</select>', true);
+      '<input class="input implabel" data-implabel="' + i + '" value="' + esc(m.op.merchant) + '" aria-label="Libellé" autocomplete="off">' +
+      '<select class="input impcat" data-impcat="' + i + '" aria-label="Catégorie">' + catOptions(m.cat, m.sub) + '</select>', true);
   }).join(''));
   var waiting = r.waiting.map(function (f) {
     return '<li class="imp waiting"><span class="txt"><b>' + esc(f.label) + '</b><small>Pas encore passée · ' + money2(f.debit - f.credit) + '</small></span></li>';
@@ -742,7 +743,8 @@ function importActions() {
       out.push({ type: 'pass', id: p.forecast.id, amount: Math.abs(p.op.amount), date: p.op.date });
     } else {
       var m = r.missing[i], cs = $('[data-impcat="' + i + '"]').value.split('|');
-      out.push({ type: 'add', expense: { date: m.op.date, amount: m.op.amount, cat: cs[0], sub: cs[1], label: m.op.merchant, who: [S.data.people[0]],
+      out.push({ type: 'add', expense: { date: m.op.date, amount: m.op.amount, cat: cs[0], sub: cs[1],
+        label: $('[data-implabel="' + i + '"]').value.trim() || m.op.merchant, who: [S.data.people[0]],
         means: m.op.card ? 'CB du ' + m.op.date.slice(8) + '/' + m.op.date.slice(5, 7) : '' } });
     }
   });
@@ -1018,10 +1020,11 @@ document.addEventListener('click', function (ev) {
       call('bankConnect').then(function (r) { location.href = r.url; }).catch(function (e) { busy(t, false); fail(e); }); break;
     case 'bank-fetch':
       busy(t, true);
-      var cur = today().slice(0, 7);
-      call('bankTransactions', cur + '-01').then(function (list) {
+      // The month shown, from the 1st to its last day.
+      var ym = S.ym;
+      call('bankTransactions', ym + '-01').then(function (list) {
         busy(t, false);
-        showDiff(Bank.reconcile(S.data, Bank.fromApi(list), cur), 'Banque · ' + monthName(cur));
+        showDiff(Bank.reconcile(S.data, Bank.fromApi(list), ym), 'Banque · ' + monthName(ym));
       }).catch(function (e) { busy(t, false); fail(e); }); break;
     case 'bank-close': S.tab = S.back; render(); break;
     case 'import-yes':

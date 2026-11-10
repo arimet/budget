@@ -54,6 +54,8 @@ assert.deepEqual(plain(d2.toPass.map((p) => p.forecast.id)), ['prev:fm2']);
 assert.deepEqual(plain(d2.missing.map((m) => m.op.merchant)), ['C.P.A.M. De Meurthe']);
 assert.deepEqual(plain(d2.waiting.map((f) => f.id)), ['prev:loyer'], 'not passed yet; budgets are not forecasts');
 assert.equal(d2.skipped, 1, 'October is outside the month');
+const late = Bank.reconcile(data2, [{ posted: '2026-11-02', date: '2026-10-31', label: 'ACHAT CB X 31.10.26', amount: 4, card: true, merchant: 'X' }], '2026-11');
+assert.equal(late.skipped, 1, 'paid on 31 October, booked in November: October\'s');
 
 // Transactions from the bank connection (Enable Banking): same shape as the CSV lines; pending ones are left out.
 const api = Bank.fromApi([
