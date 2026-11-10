@@ -899,9 +899,14 @@ function testBank() {
   var uids = readJson('EB_ACCOUNTS', []), lines = [], from = currentYm() + '-01', to = Utilities.formatDate(now(), 'Europe/Paris', 'yyyy-MM-dd');
   var tryIt = function (name, path) {
     try { noteBankCall(); var r = ebFetch('get', path); lines.push('✅ ' + name + ' : ' + JSON.stringify(r).slice(0, 160)); }
-    catch (e) { lines.push('❌ ' + name + ' : ' + e.message); }
+    catch (e) { lines.push('❌ ' + name + ' : ' + (CacheService.getScriptCache().get('EB_LAST_ERROR') || e.message)); }
   };
   if (!uids.length) lines.push('Aucun compte connecté.');
+  try {
+    var b = lbp();
+    lines.push('ℹ️ ' + b.name + ' chez Enable Banking : ' + JSON.stringify({ beta: b.beta, psu_headers: b.required_psu_headers, consent: b.maximum_consent_validity,
+      psu_types: b.psu_types, auth: (b.auth_methods || []).map(function (m) { return m.name + '/' + m.psu_type; }) }));
+  } catch (e) { lines.push('❌ Liste des banques : ' + e.message); }
   uids.slice(0, 1).forEach(function (uid) {
     tryIt('Soldes', '/accounts/' + encodeURIComponent(uid) + '/balances');
     tryIt('Opérations du ' + from + ' au ' + to, '/accounts/' + encodeURIComponent(uid) + '/transactions?date_from=' + from + '&date_to=' + to);
@@ -930,6 +935,7 @@ function ebFetch(method, path, payload) {
   if (payload) { opts.contentType = 'application/json'; opts.payload = JSON.stringify(payload); }
   var res = UrlFetchApp.fetch(EB_API + path, opts), out = {};
   try { out = JSON.parse(res.getContentText()); } catch (e) { /* not JSON */ }
+  if (res.getResponseCode() >= 300) CacheService.getScriptCache().put('EB_LAST_ERROR', res.getResponseCode() + ' ' + res.getContentText().slice(0, 600), 3600);
   if (res.getResponseCode() >= 300) throw new Error('Banque : ' + (out.message || out.error || 'erreur ' + res.getResponseCode()) + (out.detail ? ' (' + JSON.stringify(out.detail) + ')' : ''));
   return out;
 }
