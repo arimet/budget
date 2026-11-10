@@ -70,7 +70,7 @@ const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpens
   markPassed: code.markPassed, saveForecast: code.saveForecast, prepareMonth: code.prepareMonth, importBank: code.importBank,
   // The bank connection, connected for 3 months, with two lines of this month.
   bankConnect: () => ({ url: './' }),
-  bankTransactions: () => [
+  bankTransactions: () => ({ calls: 2, transactions: [
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '82.12', currency: 'EUR' }, booking_date: today.slice(0, 8) + '02',
       remittance_information: ['ACHAT CB AUCHAN 01.' + today.slice(5, 7) + '.' + today.slice(2, 4)] },
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '5.50', currency: 'EUR' }, booking_date: today.slice(0, 8) + '04',
@@ -78,7 +78,7 @@ const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpens
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '23.80', currency: 'EUR' }, booking_date: today,
       remittance_information: ['ACHAT CB BOULANGERIE CILLA ' + today.slice(8, 10) + '.' + today.slice(5, 7) + '.' + today.slice(2, 4)] },
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '39.99', currency: 'EUR' }, booking_date: today,
-      creditor: { name: 'FREE TELECOM' }, remittance_information: ['PRELEVEMENT DE FREE TELECOM'] }] };
+      creditor: { name: 'FREE TELECOM' }, remittance_information: ['PRELEVEMENT DE FREE TELECOM'] }] }) };
 
 // Google sign-in in the preview: the fake button sends "mock", exchanged for a session key like on the real server.
 const MOCK_TOKEN = 'mock-session-key-0000000000000000';

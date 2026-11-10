@@ -665,7 +665,8 @@ function bankHtml() {
   var b = S.data.bank;
   if (!b || !b.configured) return '';
   if (b.until > new Date().toISOString()) return '<button type="button" class="btn importbtn" data-action="bank-fetch">' + icon('download') +
-    'Récupérer depuis la banque</button><p class="hint">Accès à la banque jusqu\'au ' + shortDate(b.until.slice(0, 10)).replace(/\.$/, '') + '.</p>';
+    'Récupérer depuis la banque</button><p class="hint">Accès à la banque jusqu\'au ' + shortDate(b.until.slice(0, 10)).replace(/\.$/, '') +
+    (b.calls ? ' · ' + b.calls + ' consultation' + (b.calls > 1 ? 's' : '') + ' depuis l\'appli ces dernières 24 h (la banque en accepte environ 4)' : '') + '.</p>';
   return '<button type="button" class="btn importbtn" data-action="bank-connect">' + icon('download') +
     (b.until ? 'Reconnecter la banque (accès expiré)' : 'Connecter la banque') + '</button>';
 }
@@ -1022,10 +1023,12 @@ document.addEventListener('click', function (ev) {
       busy(t, true);
       // The month shown, from the 1st to its last day.
       var ym = S.ym;
-      call('bankTransactions', ym + '-01').then(function (list) {
+      var last = Calc.addMonths(ym, 1) + '-01', end = new Date(new Date(last) - 864e5).toISOString().slice(0, 10);
+      call('bankTransactions', ym + '-01', end < today() ? end : today()).then(function (r) {
         busy(t, false);
-        showDiff(Bank.reconcile(S.data, Bank.fromApi(list), ym), 'Banque · ' + monthName(ym));
-      }).catch(function (e) { busy(t, false); fail(e); }); break;
+        S.data.bank.calls = r.calls;
+        showDiff(Bank.reconcile(S.data, Bank.fromApi(r.transactions), ym), 'Banque · ' + monthName(ym));
+      }).catch(function (e) { busy(t, false); fail(e); load(true); }); break;
     case 'bank-close': S.tab = S.back; render(); break;
     case 'import-yes':
       var acts = importActions();

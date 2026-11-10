@@ -202,7 +202,8 @@ function onOpen() {
     .addItem('Déconnecter tous les appareils', 'logoutAllMenu')
     .addItem('Créer les onglets manquants', 'setup')
     .addItem('Préparer le mois suivant', 'prepareNextMonth')
-    .addItem('Configurer la banque', 'configureBank');
+    .addItem('Configurer la banque', 'configureBank')
+    .addItem('Tester la banque', 'testBank');
   // Import.gs exists only while a one-off import of bank statements is pending.
   if (typeof importReleves === 'function') menu.addItem('Importer les relevés', 'importReleves');
   menu.addToUi();
@@ -323,7 +324,7 @@ function readContext(ss) {
 
 // `fresh` (pull to refresh) skips the cache.
 function getData(fresh) {
-  if (!fresh) { var hit = cachedData(); if (hit) return hit; }
+  if (!fresh) { var hit = cachedData(); if (hit) { hit.bank = bankInfo(); return hit; } } // the bank count moves without a write
   var ss = SpreadsheetApp.getActive();
   // Opening the app is when a new month gets its tab and envelopes catch up with lines typed in the Sheets.
   withLock(function () {
@@ -887,7 +888,34 @@ function configureBank() {
 
 function bankInfo() {
   var p = props();
-  return { configured: !!(p.getProperty('EB_APP') && p.getProperty('EB_KEY')), until: p.getProperty('EB_UNTIL') || '' };
+  return { configured: !!(p.getProperty('EB_APP') && p.getProperty('EB_KEY')), until: p.getProperty('EB_UNTIL') || '', calls: bankCalls().length };
+}
+
+// The bank allows about 4 reads a day without the account holder signing in: the app's own reads of the last 24 h are
+// counted here (nothing tells how many the bank has left). Reads made elsewhere are not counted.
+// From the Sheets menu: which calls the bank accepts. Balances take no parameter, so if they pass and the
+// transactions fail, the transactions request is the problem; if both fail, it is the consent or the bank. 2 reads.
+function testBank() {
+  var uids = readJson('EB_ACCOUNTS', []), lines = [], from = currentYm() + '-01', to = Utilities.formatDate(now(), 'Europe/Paris', 'yyyy-MM-dd');
+  var tryIt = function (name, path) {
+    try { noteBankCall(); var r = ebFetch('get', path); lines.push('✅ ' + name + ' : ' + JSON.stringify(r).slice(0, 160)); }
+    catch (e) { lines.push('❌ ' + name + ' : ' + e.message); }
+  };
+  if (!uids.length) lines.push('Aucun compte connecté.');
+  uids.slice(0, 1).forEach(function (uid) {
+    tryIt('Soldes', '/accounts/' + encodeURIComponent(uid) + '/balances');
+    tryIt('Opérations du ' + from + ' au ' + to, '/accounts/' + encodeURIComponent(uid) + '/transactions?date_from=' + from + '&date_to=' + to);
+  });
+  SpreadsheetApp.getUi().alert('Test de la banque', lines.join('\n\n') + '\n\nComptes connectés : ' + uids.length + ' · accès jusqu\'au ' + (props().getProperty('EB_UNTIL') || '?'),
+    SpreadsheetApp.getUi().ButtonSet.OK);
+}
+
+function bankCalls() {
+  var since = nowMs() - 864e5;
+  return readJson('EB_CALLS', []).filter(function (t) { return t > since; });
+}
+function noteBankCall() {
+  props().setProperty('EB_CALLS', JSON.stringify(bankCalls().concat([nowMs()])));
 }
 
 function b64url(x) { return Utilities.base64EncodeWebSafe(x).replace(/=+$/, ''); }
@@ -945,24 +973,35 @@ function doGet(e) {
     .setTitle('Budget du foyer').addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
-// Booked and pending lines of the connected accounts since `from` (yyyy-mm-dd), as the bank sends them.
-function bankTransactions(from) {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('Date invalide.');
+// Booked and pending lines of the connected accounts from `from` to `to` (yyyy-mm-dd), as the bank sends them.
+// La Banque Postale answers "Error interacting with ASPSP" to some date ranges: on that error, the bank's own default
+// range is asked once (the app keeps only the month it shows). Each call counts in the bank's limit of 4 a day.
+function bankTransactions(from, to) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || (to && !/^\d{4}-\d{2}-\d{2}$/.test(to))) throw new Error('Date invalide.');
   var uids = readJson('EB_ACCOUNTS', []), until = props().getProperty('EB_UNTIL') || '';
   if (!uids.length) throw new Error('Banque pas encore connectée.');
   if (until < new Date(nowMs()).toISOString()) throw new Error('L\'accès à la banque a expiré : reconnecte-la.');
   var out = [];
   uids.forEach(function (uid) {
-    var key = '';
-    do {
-      var r = ebFetch('get', '/accounts/' + encodeURIComponent(uid) + '/transactions?date_from=' + from + (key ? '&continuation_key=' + encodeURIComponent(key) : ''));
-      (r.transactions || []).forEach(function (t) {
-        out.push({ status: t.status, credit_debit_indicator: t.credit_debit_indicator, transaction_amount: t.transaction_amount,
-          booking_date: t.booking_date, value_date: t.value_date, transaction_date: t.transaction_date, remittance_information: t.remittance_information,
-          creditor: t.creditor && { name: t.creditor.name }, debtor: t.debtor && { name: t.debtor.name } });
-      });
-      key = r.continuation_key;
-    } while (key);
+    var list;
+    try { list = accountTransactions(uid, 'date_from=' + from + (to ? '&date_to=' + to : '')); }
+    catch (e) { if (!/ASPSP/.test(e.message)) throw e; list = accountTransactions(uid, ''); }
+    list.forEach(function (t) {
+      out.push({ status: t.status, credit_debit_indicator: t.credit_debit_indicator, transaction_amount: t.transaction_amount,
+        booking_date: t.booking_date, value_date: t.value_date, transaction_date: t.transaction_date, remittance_information: t.remittance_information,
+        creditor: t.creditor && { name: t.creditor.name }, debtor: t.debtor && { name: t.debtor.name } });
+    });
   });
-  return out;
+  return { transactions: out, calls: bankCalls().length };
+}
+function accountTransactions(uid, query) {
+  var all = [], key = '';
+  do {
+    var q = [query, key ? 'continuation_key=' + encodeURIComponent(key) : ''].filter(String).join('&');
+    noteBankCall();
+    var r = ebFetch('get', '/accounts/' + encodeURIComponent(uid) + '/transactions' + (q ? '?' + q : ''));
+    all = all.concat(r.transactions || []);
+    key = r.continuation_key;
+  } while (key);
+  return all;
 }
