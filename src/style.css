@@ -503,3 +503,13 @@ select.input{appearance:none;padding-right:34px;background-image:linear-gradient
 .ptr.go{display:block;animation:spin .7s linear infinite}
 /* Google's button is a light page in a frame: on a dark page the browser would paint a white box behind it. */
 #gbtn iframe{color-scheme:light}
+
+/* Bank against the Sheets */
+.diff{margin-top:22px}
+.diff h2{font-size:17px;margin:0 0 10px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+.diff h2 span{font-size:13px;font-weight:500;color:var(--text-2)}
+.impcheck small b{color:var(--text);font-weight:600}
+.imp.waiting{padding-left:42px}
+.imp.waiting .txt{display:flex;flex-direction:column}
+.imp.waiting b{color:var(--text-2);font-weight:600}
+.imp.waiting small{font-size:12px;color:var(--text-2)}

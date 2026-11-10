@@ -39,6 +39,22 @@ assert.deepEqual(plain(r.toPass.map((p) => [p.op.merchant, p.forecast.id, p.op.a
 assert.deepEqual(plain(r.missing.map((m) => [m.op.merchant, m.cat, m.sub])), [['Papa Fries', 'Alimentation', 'Restaurants'], ['C.P.A.M. De Meurthe', 'Santé', 'Remboursements']]);
 assert.equal(r.skipped, 1, 'October has no tab: left out');
 
+// The diff of one month: lines that differ from the Sheets, missing ones, forecasts passed or still waiting.
+const data2 = { categories: data.categories, months: [{ ym: '2026-11', tab: 'Novembre 2026', opening: 0, rows: [
+  row('2026-11-03', 'Auchan', 82.12, 'Alimentation', 'Courses'),
+  row('2026-11-04', 'Papa Fries', 10, 'Alimentation', 'Restaurants'),
+  row('', 'Prélèvement de Free Mobile', 18.99, 'Abonnements & télécoms', 'Mobile', { id: 'prev:fm2', forecast: true }),
+  row('', 'Loyer', 800, 'Logement', 'Loyer', { id: 'prev:loyer', forecast: true }),
+  row('', 'Alimentation', 300, 'Alimentation', '', { id: 'env:Alimentation|', forecast: true, envelope: true }),
+] }] };
+const d2 = Bank.reconcile(data2, ops, '2026-11');
+assert.deepEqual(plain(d2.known.map((k) => k.op.merchant)), ['Auchan.fr']);
+assert.deepEqual(plain(d2.differs.map((x) => [x.op.merchant, x.row.debit, x.op.amount])), [['Papa Fries', 10, 10.7]], 'same shop, close date, other amount');
+assert.deepEqual(plain(d2.toPass.map((p) => p.forecast.id)), ['prev:fm2']);
+assert.deepEqual(plain(d2.missing.map((m) => m.op.merchant)), ['C.P.A.M. De Meurthe']);
+assert.deepEqual(plain(d2.waiting.map((f) => f.id)), ['prev:loyer'], 'not passed yet; budgets are not forecasts');
+assert.equal(d2.skipped, 1, 'October is outside the month');
+
 // Transactions from the bank connection (Enable Banking): same shape as the CSV lines; pending ones are left out.
 const api = Bank.fromApi([
   { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '12.40', currency: 'EUR' }, booking_date: '2026-11-05',

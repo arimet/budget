@@ -43,26 +43,45 @@ function fromApi(list) {
 function days(a, b) { return Math.abs((new Date(a) - new Date(b)) / 864e5); }
 function words(s) { return Calc.norm(s).split(' ').filter(function (w) { return w && !STOP[w]; }); }
 
-function reconcile(data, ops) {
-  var tabs = {}, used = {}, out = { known: [], toPass: [], missing: [], skipped: 0 };
+// Bank lines against the Sheets, in passes so a loose match never takes a row an exact one needs:
+// known (same amount, close date), differs (same name, close date, other amount or date), toPass (a forecast that went
+// through), missing; then waiting = forecasts not passed. `ym`: only that month's lines (the others count as skipped).
+function reconcile(data, ops, ym) {
+  var tabs = {}, used = {}, out = { known: [], differs: [], toPass: [], missing: [], waiting: [], skipped: 0 };
   data.months.forEach(function (m) { tabs[m.ym] = m; });
+  var todo = [], seen = {};
   ops.forEach(function (op) {
-    var m = tabs[op.date.slice(0, 7)] || tabs[op.posted.slice(0, 7)];
+    var m = ym ? (op.date.slice(0, 7) === ym || op.posted.slice(0, 7) === ym ? tabs[ym] : null) : tabs[op.date.slice(0, 7)] || tabs[op.posted.slice(0, 7)];
     if (!m) { out.skipped++; return; }
-    var free = function (r) { return !used[r.id]; };
-    var real = m.rows.filter(function (r) {
-      return free(r) && !r.forecast && Math.abs(r.debit - r.credit - op.amount) < 0.005 && (days(r.date, op.date) <= 3 || days(r.date, op.posted) <= 3);
-    })[0];
-    if (real) { used[real.id] = 1; out.known.push({ op: op, row: real }); return; }
-    var opWords = words(op.label);
-    var fc = m.rows.filter(function (r) {
-      if (!free(r) || !r.forecast || r.envelope || (op.amount > 0 ? !r.debit : !r.credit)) return false;
-      var w = words(r.label);
-      return (w.length && w.every(function (x) { return opWords.indexOf(x) >= 0; })) || Math.abs((r.debit || r.credit) - Math.abs(op.amount)) < 0.01;
-    })[0];
-    if (fc) { used[fc.id] = 1; out.toPass.push({ op: op, forecast: fc }); return; }
-    var s = Calc.suggest(data, op.merchant.replace(/\./g, '')) || { cat: 'Divers', sub: 'À classer' };
-    out.missing.push({ op: op, cat: s.cat, sub: s.sub });
+    seen[m.ym] = m;
+    todo.push({ op: op, m: m });
+  });
+  var free = function (r) { return !used[r.id]; };
+  var near = function (r, op, n) { return days(r.date, op.date) <= n || days(r.date, op.posted) <= n; };
+  var pass = function (find, keep) {
+    todo = todo.filter(function (t) {
+      var r = t.m.rows.filter(function (x) { return free(x) && find(x, t.op); })[0];
+      if (!r) return true;
+      used[r.id] = 1; keep(t.op, r); return false;
+    });
+  };
+  pass(function (r, op) { return !r.forecast && Math.abs(r.debit - r.credit - op.amount) < 0.005 && near(r, op, 3); },
+    function (op, r) { out.known.push({ op: op, row: r }); });
+  pass(function (r, op) {
+    var w = words(r.label).filter(function (x) { return x.length >= 3; }), o = words(op.label + ' ' + op.merchant);
+    return !r.forecast && near(r, op, 5) && (r.debit - r.credit > 0) === (op.amount > 0) && w.some(function (x) { return o.indexOf(x) >= 0; });
+  }, function (op, r) { out.differs.push({ op: op, row: r }); });
+  pass(function (r, op) {
+    if (!r.forecast || r.envelope || (op.amount > 0 ? !r.debit : !r.credit)) return false;
+    var w = words(r.label), o = words(op.label);
+    return (w.length && w.every(function (x) { return o.indexOf(x) >= 0; })) || Math.abs((r.debit || r.credit) - Math.abs(op.amount)) < 0.01;
+  }, function (op, r) { out.toPass.push({ op: op, forecast: r }); });
+  todo.forEach(function (t) {
+    var s = Calc.suggest(data, t.op.merchant.replace(/\./g, '')) || { cat: 'Divers', sub: 'À classer' };
+    out.missing.push({ op: t.op, cat: s.cat, sub: s.sub });
+  });
+  (ym ? [tabs[ym]].filter(Boolean) : Object.keys(seen).map(function (k) { return seen[k]; })).forEach(function (m) {
+    m.rows.forEach(function (r) { if (r.forecast && !r.envelope && free(r)) out.waiting.push(r); });
   });
   return out;
 }

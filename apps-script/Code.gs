@@ -571,7 +571,8 @@ function importBank(actions) {
     var ss = SpreadsheetApp.getActive();
     actions.forEach(function (a) {
       if (a.type === 'pass') passForecast(ss, a.id, a.amount, a.date);
-      else if (a.type === 'add') writeExpense(ss, { date: a.expense.date, amount: a.expense.amount, cat: a.expense.cat, sub: a.expense.sub,
+      // 'fix': a line already in the Sheets takes the bank's amount and date (it keeps its id).
+      else if (a.type === 'add' || a.type === 'fix') writeExpense(ss, { id: a.type === 'fix' ? a.expense.id : null, date: a.expense.date, amount: a.expense.amount, cat: a.expense.cat, sub: a.expense.sub,
         label: a.expense.label, who: a.expense.who, means: a.expense.means });
     });
     refreshEnvelopes(ss);
