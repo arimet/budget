@@ -520,7 +520,7 @@ function viewMonth() {
         '<button type="button" class="pill passbtn" data-action="restore" data-id="' + esc(t.id) + '">Récupérer</button></li>';
     }).join('') + '</ul>');
   }
-  return out + '<label class="btn importbtn">' + icon('upload') + 'Importer le relevé de la banque<input type="file" id="bankfile" accept=".csv,text/csv" hidden></label>' + installHtml();
+  return out + bankHtml() + '<label class="btn importbtn">' + icon('upload') + 'Importer le relevé de la banque<input type="file" id="bankfile" accept=".csv,text/csv" hidden></label>' + installHtml();
 }
 
 // ------------------------------------------------------------ balance chart: real line to today, dashed projection to month end
@@ -658,6 +658,16 @@ function openPassed(id) {
     '<label class="mf"><span>Date</span><span class="unit"><input id="ps-date" type="date" value="' + date + '"></span></label></div>' +
     '<div class="actions"><button type="button" class="btn primary" data-action="passed-yes" data-id="' + esc(id) + '">Valider</button>' +
     '<button type="button" class="btn" data-action="close-sheet">Annuler</button></div></div>');
+}
+
+// ------------------------------------------------------------ bank connection (read only): same check as the CSV export
+function bankHtml() {
+  var b = S.data.bank;
+  if (!b || !b.configured) return '';
+  if (b.until > new Date().toISOString()) return '<button type="button" class="btn importbtn" data-action="bank-fetch">' + icon('download') +
+    'Récupérer depuis la banque</button><p class="hint">Accès à la banque jusqu\'au ' + shortDate(b.until.slice(0, 10)).replace(/\.$/, '') + '.</p>';
+  return '<button type="button" class="btn importbtn" data-action="bank-connect">' + icon('download') +
+    (b.until ? 'Reconnecter la banque (accès expiré)' : 'Connecter la banque') + '</button>';
 }
 
 // ------------------------------------------------------------ bank export: what is there, what went through, what is missing
@@ -976,6 +986,17 @@ document.addEventListener('click', function (ev) {
     case 'restore':
       busy(t, true);
       call('restoreExpense', t.dataset.id).then(function (d) { setData(d); toast('Ligne récupérée'); }).catch(function (e) { busy(t, false); fail(e); }); break;
+    case 'bank-connect':
+      // The bank's sign-in comes back to the server, which ends on a page pointing back to the app.
+      busy(t, true);
+      call('bankConnect').then(function (r) { location.href = r.url; }).catch(function (e) { busy(t, false); fail(e); }); break;
+    case 'bank-fetch':
+      busy(t, true);
+      call('bankTransactions', Calc.addMonths(today().slice(0, 7), -1) + '-01').then(function (list) {
+        busy(t, false);
+        S.imp = Bank.reconcile(S.data, Bank.fromApi(list));
+        openImport();
+      }).catch(function (e) { busy(t, false); fail(e); }); break;
     case 'import-yes':
       var acts = importActions();
       if (!acts.length) { closeSheet(); return; }

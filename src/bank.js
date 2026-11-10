@@ -27,6 +27,19 @@ function parse(text) {
   });
 }
 
+// Transactions from the bank connection (Enable Banking, booked only), as the CSV lines above.
+function fromApi(list) {
+  return list.filter(function (t) { return t.status === 'BOOK'; }).map(function (t) {
+    var label = (t.remittance_information || []).join(' ').replace(/\s+/g, ' ').trim();
+    var who = t.credit_debit_indicator === 'CRDT' ? t.debtor : t.creditor;
+    if (!label) label = (who && who.name) || '';
+    var posted = t.booking_date || t.value_date, cb = label.match(/(\d\d)\.(\d\d)\.(\d\d)/), card = /ACHAT CB/.test(label);
+    var amount = Number(t.transaction_amount.amount) * (t.credit_debit_indicator === 'CRDT' ? -1 : 1);
+    return { posted: posted, date: card && cb ? '20' + cb[3] + '-' + cb[2] + '-' + cb[1] : t.transaction_date || posted, label: label,
+      amount: Math.round(amount * 100) / 100, card: card, merchant: who && who.name ? merchant(who.name) : merchant(label) };
+  });
+}
+
 function days(a, b) { return Math.abs((new Date(a) - new Date(b)) / 864e5); }
 function words(s) { return Calc.norm(s).split(' ').filter(function (w) { return w && !STOP[w]; }); }
 
@@ -54,4 +67,4 @@ function reconcile(data, ops) {
   return out;
 }
 
-export var Bank = { parse: parse, reconcile: reconcile, merchant: merchant };
+export var Bank = { parse: parse, fromApi: fromApi, reconcile: reconcile, merchant: merchant };

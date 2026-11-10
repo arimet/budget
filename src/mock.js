@@ -9,6 +9,9 @@ const ymOf = (back) => { const d = new Date(now.getFullYear(), now.getMonth() - 
 
 const book = new Book();
 const code = loadCodeFrom(gs, book, today);
+// The bank connection: configured and consented for 3 months (calls answered further down, in `api`).
+code.props().setProperty('EB_APP', 'mock'); code.props().setProperty('EB_KEY', 'mock');
+code.props().setProperty('EB_UNTIL', new Date(Date.now() + 90 * 864e5).toISOString());
 const DEF = new Function(gs + ';return { categories: DEFAULT_CATEGORIES, people: DEFAULT_PEOPLE };')();
 book.add('Personnes', [['Nom']].concat(DEF.people.concat(['Alex', 'Camille']).map((p) => [p])));
 book.add('Catégories', [['Catégorie', 'Sous-catégorie', 'Emoji', 'Mots-clés']]
@@ -64,7 +67,14 @@ const d = now.getDate();
   code.saveExpense({ date: today.slice(0, 8) + pad(x), amount, cat, sub, label, who: ['Foyer'] }));
 
 const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpense: code.deleteExpense, restoreExpense: code.restoreExpense,
-  markPassed: code.markPassed, saveForecast: code.saveForecast, prepareMonth: code.prepareMonth, importBank: code.importBank };
+  markPassed: code.markPassed, saveForecast: code.saveForecast, prepareMonth: code.prepareMonth, importBank: code.importBank,
+  // The bank connection, connected for 3 months, with two lines of this month.
+  bankConnect: () => ({ url: './' }),
+  bankTransactions: () => [
+    { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '23.80', currency: 'EUR' }, booking_date: today,
+      remittance_information: ['ACHAT CB BOULANGERIE CILLA ' + today.slice(8, 10) + '.' + today.slice(5, 7) + '.' + today.slice(2, 4)] },
+    { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '39.99', currency: 'EUR' }, booking_date: today,
+      creditor: { name: 'FREE TELECOM' }, remittance_information: ['PRELEVEMENT DE FREE TELECOM'] }] };
 
 // Google sign-in in the preview: the fake button sends "mock", exchanged for a session key like on the real server.
 const MOCK_TOKEN = 'mock-session-key-0000000000000000';

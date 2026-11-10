@@ -39,4 +39,15 @@ assert.deepEqual(plain(r.toPass.map((p) => [p.op.merchant, p.forecast.id, p.op.a
 assert.deepEqual(plain(r.missing.map((m) => [m.op.merchant, m.cat, m.sub])), [['Papa Fries', 'Alimentation', 'Restaurants'], ['C.P.A.M. De Meurthe', 'Santé', 'Remboursements']]);
 assert.equal(r.skipped, 1, 'October has no tab: left out');
 
+// Transactions from the bank connection (Enable Banking): same shape as the CSV lines; pending ones are left out.
+const api = Bank.fromApi([
+  { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '12.40', currency: 'EUR' }, booking_date: '2026-11-05',
+    remittance_information: ['ACHAT CB PAPA FRIES 03.11.26 EUR 12,40 CARTE NO 123'] },
+  { status: 'BOOK', credit_debit_indicator: 'CRDT', transaction_amount: { amount: '2500.00', currency: 'EUR' }, booking_date: '2026-11-28',
+    debtor: { name: 'EMPLOYEUR A' }, remittance_information: ['VIREMENT DE EMPLOYEUR A SALAIRE'] },
+  { status: 'PDNG', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '5.00', currency: 'EUR' }, booking_date: '2026-11-29', remittance_information: ['EN COURS'] },
+]);
+assert.deepEqual(plain(api.map((o) => [o.posted, o.date, o.amount, o.card, o.merchant])),
+  [['2026-11-05', '2026-11-03', 12.4, true, 'Papa Fries'], ['2026-11-28', '2026-11-28', -2500, false, 'Employeur A']]);
+
 console.log('bank: all checks pass');

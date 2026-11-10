@@ -91,7 +91,7 @@ var DEFAULT_CATEGORIES = [
 // ------------------------------------------------------------------ JSON API for the web app (hosted elsewhere)
 
 // The web app runs as the owner and is open to anyone with the URL: the password is the only gate.
-var API = { getData: getData, saveExpense: saveExpense, deleteExpense: deleteExpense, restoreExpense: restoreExpense, markPassed: markPassed, saveForecast: saveForecast, prepareMonth: prepareMonth, importBank: importBank };
+var API = { getData: getData, saveExpense: saveExpense, deleteExpense: deleteExpense, restoreExpense: restoreExpense, markPassed: markPassed, saveForecast: saveForecast, bankConnect: bankConnect, bankTransactions: bankTransactions, prepareMonth: prepareMonth, importBank: importBank };
 
 // Access: Google sign-in on the web app; only people the spreadsheet is shared with (editors, owner) get in.
 // A verified Google identity is exchanged for a long random session key; only its hash is kept, with the email,
@@ -201,7 +201,8 @@ function onOpen() {
     .addItem('Autoriser la connexion Google', 'authorizeGoogle')
     .addItem('Déconnecter tous les appareils', 'logoutAllMenu')
     .addItem('Créer les onglets manquants', 'setup')
-    .addItem('Préparer le mois suivant', 'prepareNextMonth');
+    .addItem('Préparer le mois suivant', 'prepareNextMonth')
+    .addItem('Configurer la banque', 'configureBank');
   // Import.gs exists only while a one-off import of bank statements is pending.
   if (typeof importReleves === 'function') menu.addItem('Importer les relevés', 'importReleves');
   menu.addToUi();
@@ -344,7 +345,8 @@ function getData(fresh) {
     fixed: readFixed(ss, ctx),
     trash: readTrash(ss, ctx.tz),
     savings: readSavings(ss),
-    months: monthTabs(ss).map(function (t) { return readMonth(t.sh, ctx); })
+    months: monthTabs(ss).map(function (t) { return readMonth(t.sh, ctx); }),
+    bank: bankInfo()
   };
   if (CacheService.getScriptCache().get('GEN') === gen) cacheData(data); // no write slipped in while reading
   return data;
@@ -857,4 +859,109 @@ function ym(v, tz) {
 
 function pad(n) {
   return ('0' + n).slice(-2);
+}
+
+// ------------------------------------------------------------------ bank connection (Enable Banking, read only)
+// The Enable Banking app's id and private key are set from the Sheets menu and stay in the Script Properties.
+// The bank's consent lasts at most 180 days (PSD2): renewing it means signing in to the bank again.
+var EB_API = 'https://api.enablebanking.com';
+// The bank sends the user back here (doGet): this URL is registered as the redirect URL of the Enable Banking app.
+var WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxyr6VEJfNQ8ldL1vnc-MEFV6bQ4dYZ1qvTyeCMC5_x1lbwmCcbs2M36ITvcrTUSF0/exec';
+
+function configureBank() {
+  var ui = SpreadsheetApp.getUi();
+  var id = ui.prompt('Banque (1/2)', 'Application ID de l\'application Enable Banking :', ui.ButtonSet.OK_CANCEL);
+  if (id.getSelectedButton() !== ui.Button.OK) return;
+  var key = ui.prompt('Banque (2/2)', 'Tout le contenu du fichier .pem téléchargé à la création de l\'application :', ui.ButtonSet.OK_CANCEL);
+  if (key.getSelectedButton() !== ui.Button.OK) return;
+  // A paste into a one-line field loses the line breaks: keep the base64 body and lay the PEM out again.
+  var body = key.getResponseText().replace(/-----[^-]+-----/g, '').replace(/\s+/g, '');
+  if (!/^[A-Za-z0-9+\/=]{200,}$/.test(body)) { ui.alert('Ce n\'est pas une clé privée : colle tout le fichier .pem.'); return; }
+  props().setProperty('EB_APP', id.getResponseText().trim());
+  props().setProperty('EB_KEY', '-----BEGIN PRIVATE KEY-----\n' + body.match(/.{1,64}/g).join('\n') + '\n-----END PRIVATE KEY-----\n');
+  try { lbp(); } catch (e) { ui.alert('La clé ne marche pas : ' + e.message); return; }
+  dropData();
+  ui.alert('C\'est prêt : connecte la banque depuis l\'appli (écran Mois, en bas).');
+}
+
+function bankInfo() {
+  var p = props();
+  return { configured: !!(p.getProperty('EB_APP') && p.getProperty('EB_KEY')), until: p.getProperty('EB_UNTIL') || '' };
+}
+
+function b64url(x) { return Utilities.base64EncodeWebSafe(x).replace(/=+$/, ''); }
+function ebJwt() {
+  var iat = Math.floor(nowMs() / 1000);
+  var head = b64url(JSON.stringify({ typ: 'JWT', alg: 'RS256', kid: props().getProperty('EB_APP') }));
+  var body = b64url(JSON.stringify({ iss: 'enablebanking.com', aud: 'api.enablebanking.com', iat: iat, exp: iat + 3600 }));
+  return head + '.' + body + '.' + b64url(Utilities.computeRsaSha256Signature(head + '.' + body, props().getProperty('EB_KEY')));
+}
+function ebFetch(method, path, payload) {
+  var opts = { method: method, headers: { Authorization: 'Bearer ' + ebJwt() }, muteHttpExceptions: true };
+  if (payload) { opts.contentType = 'application/json'; opts.payload = JSON.stringify(payload); }
+  var res = UrlFetchApp.fetch(EB_API + path, opts), out = {};
+  try { out = JSON.parse(res.getContentText()); } catch (e) { /* not JSON */ }
+  if (res.getResponseCode() >= 300) throw new Error('Banque : ' + (out.message || out.error || 'erreur ' + res.getResponseCode()) + (out.detail ? ' (' + JSON.stringify(out.detail) + ')' : ''));
+  return out;
+}
+// La Banque Postale as Enable Banking names it, with how long its consent can last.
+function lbp() {
+  var bank = (ebFetch('get', '/aspsps?country=FR').aspsps || []).filter(function (a) { return /banque postale/i.test(a.name); })[0];
+  if (!bank) throw new Error('La Banque Postale n\'est pas dans la liste d\'Enable Banking.');
+  return bank;
+}
+
+// Starts the bank's sign-in: the app opens the returned URL; the bank comes back to doGet.
+function bankConnect() {
+  if (!bankInfo().configured) throw new Error('Banque pas encore configurée : menu Budget → Configurer la banque, dans le Sheets.');
+  var bank = lbp(), state = Utilities.getUuid(), secs = Math.min(bank.maximum_consent_validity || 7776000, 15552000);
+  CacheService.getScriptCache().put('EB_STATE', state, 1800);
+  var res = ebFetch('post', '/auth', { access: { valid_until: new Date(nowMs() + secs * 1000).toISOString() }, aspsp: { name: bank.name, country: 'FR' },
+    state: state, redirect_url: WEB_APP_URL, psu_type: 'personal' });
+  return { url: res.url };
+}
+
+// The bank's redirect after sign-in: the code becomes a session; only the current accounts are kept (not the savings).
+function doGet(e) {
+  var p = (e && e.parameter) || {}, msg;
+  try {
+    if (!p.code) throw new Error(p.error_description || p.error || 'rien à faire ici');
+    var state = CacheService.getScriptCache().get('EB_STATE');
+    if (!state || state !== p.state) throw new Error('le lien a expiré, relance « Connecter la banque » depuis l\'appli');
+    CacheService.getScriptCache().remove('EB_STATE');
+    var s = ebFetch('post', '/sessions', { code: p.code });
+    var current = s.accounts.filter(function (a) { return a.cash_account_type === 'CACC'; });
+    props().setProperty('EB_ACCOUNTS', JSON.stringify((current.length ? current : s.accounts).map(function (a) { return a.uid; })));
+    props().setProperty('EB_UNTIL', s.access.valid_until);
+    dropData();
+    msg = 'Banque connectée jusqu\'au ' + Utilities.formatDate(new Date(s.access.valid_until), 'Europe/Paris', 'dd/MM/yyyy') + '. Tu peux revenir dans l\'appli Budget.';
+  } catch (err) {
+    msg = 'Connexion à la banque impossible : ' + err.message + '.';
+  }
+  var safe = msg.replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+  return HtmlService.createHtmlOutput('<div style="font:18px/1.5 system-ui,sans-serif;padding:32px;max-width:480px">' + safe +
+    '<p><a href="https://arimet.github.io/budget/" target="_top">Ouvrir l\'appli</a></p></div>')
+    .setTitle('Budget du foyer').addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+// Booked and pending lines of the connected accounts since `from` (yyyy-mm-dd), as the bank sends them.
+function bankTransactions(from) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) throw new Error('Date invalide.');
+  var uids = readJson('EB_ACCOUNTS', []), until = props().getProperty('EB_UNTIL') || '';
+  if (!uids.length) throw new Error('Banque pas encore connectée.');
+  if (until < new Date(nowMs()).toISOString()) throw new Error('L\'accès à la banque a expiré : reconnecte-la.');
+  var out = [];
+  uids.forEach(function (uid) {
+    var key = '';
+    do {
+      var r = ebFetch('get', '/accounts/' + encodeURIComponent(uid) + '/transactions?date_from=' + from + (key ? '&continuation_key=' + encodeURIComponent(key) : ''));
+      (r.transactions || []).forEach(function (t) {
+        out.push({ status: t.status, credit_debit_indicator: t.credit_debit_indicator, transaction_amount: t.transaction_amount,
+          booking_date: t.booking_date, value_date: t.value_date, transaction_date: t.transaction_date, remittance_information: t.remittance_information,
+          creditor: t.creditor && { name: t.creditor.name }, debtor: t.debtor && { name: t.debtor.name } });
+      });
+      key = r.continuation_key;
+    } while (key);
+  });
+  return out;
 }
