@@ -8,6 +8,7 @@ const loadCode = (b, today = '2026-11-07') => loadCodeFrom(SRC, b, today);
 
 const HEAD = ['Date', 'CB / Chèque', 'Libellé', 'Crédit', 'Débit', 'Solde', '', 'Catégorie', 'Sous-catégorie', 'Pour', 'ID'];
 const d = (s) => new Date(s + 'T00:00:00');
+const plain = (v) => JSON.parse(JSON.stringify(v));
 
 // A spreadsheet with the settings tabs and November 2026 as kept by hand.
 function book() {
@@ -245,6 +246,18 @@ const env = (b, name, key) => loadCode(b).readMonth(b.getSheetByName(name)).rows
   code.deleteExpense('prev:new1', false);
   assert.equal(fc('prev:new1'), undefined);
   assert.throws(() => code.saveForecast({ id: 'a2', ym: '2026-11', amount: 5, label: 'x', cat: 'Loisirs', sub: 'Sport', who: ['Foyer'] }), /déjà passée/);
+}
+{
+  // The budget plan is read from its own tab: spending lines with the categories that feed them, and transfers.
+  const b = book();
+  assert.deepEqual(plain(loadCode(b).getData(true).plan), [], 'no tab: no plan');
+  b.add('Plan', [['Type', 'Poste', 'Ligne', 'Montant', 'Catégories'],
+    ['Dépense', 'Courses', 'Supermarché', 500, 'Alimentation > Courses'], ['', 'Le reste', 'Sorties', 40, 'Loisirs > Sorties & culture, Loisirs > Livres & jeux'],
+    ['Virement', 'Épargne', 'Livret', 100, ''], ['', '', '', '', '']]);
+  assert.deepEqual(plain(loadCode(b).getData(true).plan), [
+    { type: 'Dépense', poste: 'Courses', line: 'Supermarché', amount: 500, cats: ['Alimentation > Courses'] },
+    { type: 'Dépense', poste: 'Le reste', line: 'Sorties', amount: 40, cats: ['Loisirs > Sorties & culture', 'Loisirs > Livres & jeux'] },
+    { type: 'Virement', poste: 'Épargne', line: 'Livret', amount: 100, cats: [] }]);
 }
 {
   // getData is served from the cache until a write, an edit by hand (onEdit) or a pull to refresh (fresh).

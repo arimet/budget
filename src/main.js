@@ -849,13 +849,14 @@ function periodLabel(kind, anchor) {
   return monthName(anchor);
 }
 
-// Synthèse has two views: where the money goes on average (the default), and one period in detail.
+// Synthèse has three views: where the money goes on average (the default), the budget plan against the month shown,
+// and one period in detail.
 function dashView() {
   if (!S.dashView) { try { S.dashView = localStorage.getItem('budget-dashview') || 'where'; } catch (e) { S.dashView = 'where'; } }
   return S.dashView;
 }
 function dashTabs() {
-  return '<div class="seg wide">' + [['where', 'Où part l\'argent'], ['period', 'Par période']].map(function (k) {
+  return '<div class="seg wide">' + [['where', 'Moyenne'], ['budget', 'Budget'], ['period', 'Période']].map(function (k) {
     return '<button type="button" data-action="dash-view" data-view="' + k[0] + '" aria-pressed="' + (dashView() === k[0]) + '">' + k[1] + '</button>';
   }).join('') + '</div>';
 }
@@ -884,7 +885,7 @@ function viewWhere() {
     }).join('') + '</div>';
   };
   var gap = w.incomeAvg - w.totalAvg, n = w.fullCount;
-  var out = '<div class="tiles"><div class="tile hero"><small>Dépenses par mois</small><b>' + money0(w.totalAvg) + '</b><em>en moyenne sur ' + n + ' mois</em></div>' +
+  var out = '<h2>Où part l\'argent</h2><div class="tiles"><div class="tile hero"><small>Dépenses par mois</small><b>' + money0(w.totalAvg) + '</b><em>en moyenne sur ' + n + ' mois</em></div>' +
     '<div class="tile"><small>Revenus par mois</small><b>' + money0(w.incomeAvg) + '</b></div>' +
     '<div class="tile' + (gap < 0 ? ' short' : '') + '"><small>Écart</small><b class="' + (gap < 0 ? 'neg' : '') + '">' + money0(gap) + '</b></div></div>';
   var max = Math.max.apply(null, w.groups.map(function (g) { return g.avg; }).concat([1]));
@@ -906,8 +907,43 @@ function viewWhere() {
   return out;
 }
 
+// The plan of the "Plan" tab against the month shown: each poste unfolds into its lines; below, what no line covers
+// and the transfers planned for pay day.
+function viewBudget() {
+  var b = Calc.budget(S.data, S.ym), st = S.bg = S.bg || { open: null };
+  if (!b.postes.length && !b.transfers.length) return '<p class="empty">Pas encore de plan de budget : il se remplit dans l\'onglet « Plan » du Sheets ' +
+    '(Type, Poste, Ligne, Montant, Catégories).</p>';
+  var row = function (name, actual, budget, key, inner) {
+    var over = actual > budget + 0.005, on = key && st.open === key, w = budget > 0 ? Math.max(0, Math.min(100, actual / budget * 100)) : (actual > 0 ? 100 : 0);
+    var head = '<span class="wh-name">' + esc(name) + '</span><span class="wh-track' + (over ? ' over' : '') + '"><i style="width:' + w.toFixed(1) + '%"></i></span>' +
+      '<span class="wh-amt' + (over ? ' neg' : '') + '">' + money0(actual) + ' <small>/ ' + money0(budget) + '</small></span>';
+    return '<div class="wh-row' + (on ? ' sel' : '') + '">' + (key
+      ? '<button type="button" data-action="bg-poste" data-key="' + esc(key) + '" aria-expanded="' + !!on + '">' + head + icon('next', 'chev') + '</button>' + (on ? inner() : '')
+      : '<div class="wh-line">' + head + '</div>') + '</div>';
+  };
+  var left = b.budget - b.actual;
+  var out = '<div class="tiles"><div class="tile hero"><small>Budget ' + (/^[aeiouyéèh]/i.test(monthName(S.ym)) ? 'd\'' : 'de ') + esc(monthName(S.ym).toLowerCase()) + '</small><b>' + money0(b.budget) + '</b><em>hors virements</em></div>' +
+    '<div class="tile"><small>Dépensé</small><b>' + money0(b.actual) + '</b></div>' +
+    '<div class="tile' + (left < 0 ? ' short' : '') + '"><small>' + (left < 0 ? 'Dépassement' : 'Reste') + '</small><b class="' + (left < 0 ? 'neg' : '') + '">' + money0(Math.abs(left)) + '</b></div></div>';
+  out += '<div class="wh">' + b.postes.map(function (p) {
+    return row(p.name, p.actual, p.budget, p.name, function () {
+      return '<div class="wh-sub">' + p.lines.map(function (l) { return row(l.name, l.actual, l.budget); }).join('') + '</div>';
+    });
+  }).join('') + '<div class="wh-row tot"><b>Total</b><span class="wh-amt' + (left < 0 ? ' neg' : '') + '">' + money0(b.actual) + ' <small>/ ' + money0(b.budget) + '</small></span></div></div>' +
+    '<p class="hint">Dépensé / budget. Touche un poste pour voir ses lignes. Les montants se changent dans l\'onglet « Plan » du Sheets.</p>';
+  if (b.off.length) out += '<h2>Hors budget</h2><ul class="well">' + b.off.map(function (o) {
+    return '<li class="kv"><span>' + esc(o.name) + '</span><b class="num">' + money0(o.actual) + '</b></li>';
+  }).join('') + '</ul><p class="hint">Dépenses du mois qu\'aucune ligne du plan ne couvre.</p>';
+  if (b.transfers.length) out += '<h2>Virements le jour de la paie</h2><ul class="well">' + b.transfers.map(function (t) {
+    return '<li class="kv"><span>' + esc(t.name) + '</span><b class="num">' + money0(t.amount) + '</b></li>';
+  }).join('') + '<li class="kv"><b>Total mis de côté</b><b class="num">' + money0(b.transferTotal) + '</b></li></ul>' +
+    '<p class="hint">Budget et virements font ' + money0(b.total) + ' par mois : c\'est ce que le plan suppose comme salaires.</p>';
+  return out;
+}
+
 function viewDash() {
   if (dashView() === 'where') return topbar('Synthèse') + dashTabs() + viewWhere();
+  if (dashView() === 'budget') return topbar('Synthèse') + dashTabs() + viewBudget();
   var d = S.dash, months = Calc.periodMonths(d.kind, S.ym);
   var res = Calc.dashboard(S.data, months, d);
   var opt = function (v, label, sel) { return '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(label) + '</option>'; };
@@ -1116,6 +1152,7 @@ document.addEventListener('click', function (ev) {
       if (fromTable && $('.wh-row.sel')) $('.wh-row.sel').scrollIntoView({ behavior: 'smooth', block: 'start' });
       break;
     case 'wh-line': S.wh.line = S.wh.line === t.dataset.key ? null : t.dataset.key; render(); break;
+    case 'bg-poste': S.bg.open = S.bg.open === t.dataset.key ? null : t.dataset.key; render(); break;
     case 'dash-evo': S.dash.evo = t.dataset.evo; render(); break;
     case 'toggle': S.open[t.dataset.key] = !S.open[t.dataset.key]; render(); break;
     case 'prepare-month':

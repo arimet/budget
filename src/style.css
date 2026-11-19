@@ -606,6 +606,12 @@ body.adding .nav .navadd{box-shadow:var(--pressed)}
   .wh-row > button{grid-template-columns:minmax(0,1fr) auto 14px} .wh-track{grid-column:1/-1;grid-row:2}
   .wh-sub{margin-left:0;padding-left:10px} .wh-scroll th,.wh-scroll td{padding:8px 9px} .wh-scroll table{font-size:13px} .wh-scroll th button{padding:8px 9px}
 }
+/* Budget against the month: same rows; a line over its budget turns red. */
+.wh-line{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(60px,1fr) auto;gap:12px;align-items:center;padding:10px 2px}
+.wh-track.over i,.wh-row.sel > button .wh-track.over i{background:var(--danger)}
+.wh-sub > .wh-row:first-child{border-top:0}
+.well .kv b{color:var(--text)}
+@media (max-width:560px){ .wh-line{grid-template-columns:minmax(0,1fr) auto} .wh-line .wh-track{grid-column:1/-1;grid-row:2} }
 /* The month stepper: one pill, plain arrows inside. */
 .stepper{box-shadow:var(--flat)}
 .stepper button{box-shadow:none;background:none}

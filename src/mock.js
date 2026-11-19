@@ -19,6 +19,12 @@ book.add('Catégories', [['Catégorie', 'Sous-catégorie', 'Emoji', 'Mots-clés'
     .flatMap(([cat, emoji, subs]) => subs.map(([sub, kw]) => [cat, sub, emoji, kw]))));
 book.add('Budgets', [['Catégorie', 'Sous-catégorie', 'Libellé', 'Montant mensuel', 'Depuis'],
   ['Alimentation', '', 'Alimentation', 450, ''], ['Transport', 'Carburant', 'Carburant', 100, ''], ['Soins & beauté', 'Coiffeur', 'Coiffeur', 35, '']]);
+book.add('Plan', [['Type', 'Poste', 'Ligne', 'Montant', 'Catégories'],
+  ['Dépense', 'Charges fixes', 'Logement', 1000, 'Logement > Loyer / crédit, Logement > Électricité & gaz'],
+  ['Dépense', 'Charges fixes', 'Abonnements', 60, 'Abonnements & télécoms'], ['Dépense', 'Charges fixes', 'Transport', 80, 'Transport'],
+  ['Dépense', 'Courses', 'Supermarché', 380, 'Alimentation > Courses'], ['Dépense', 'Courses', 'Boulangerie et marché', 40, 'Alimentation > Boulangerie & marché'],
+  ['Dépense', 'Le reste', 'Restaurants', 60, 'Alimentation > Restaurants'], ['Dépense', 'Le reste', 'Vêtements', 50, 'Shopping > Vêtements & chaussures'],
+  ['Dépense', 'Le reste', 'Sorties', 40, 'Loisirs'], ['Virement', 'Épargne', 'Compte vacances', 150, ''], ['Virement', 'Épargne', 'Livret', 300, '']]);
 book.add('Charges fixes', [['Nom', 'CB / Chèque', 'Montant', 'Jour', 'Catégorie', 'Sous-catégorie', 'Pour', 'Mois', 'Début', 'Fin'],
   ['Prélèvement de Echéance Prêt', '', 800, 5, 'Logement', 'Loyer / crédit', 'Foyer', '', '', ''],
   ['Prélèvement électricité', '', 190, 8, 'Logement', 'Électricité & gaz', 'Foyer', '', '', ''],

@@ -259,7 +259,41 @@ export var Calc = (function () {
     return { months: months, groups: groups, total: total, totalAvg: avg(total), income: income.map(r2), incomeAvg: avg(income), fullCount: full.length };
   }
 
-  return { where: where, daysIn: daysIn, addMonths: addMonths, periodMonths: periodMonths, expenses: expenses, month: month, balanceCurve: balanceCurve, plan: plan,
+  // ---------------------------------------------------------- the budget plan against one month
+  // Each spending line of the plan with what was spent that month on its categories ("Cat" or "Cat > Sub"; the most
+  // precise line takes the expense), what no line covers, and the transfers planned for pay day.
+  function budget(data, ym) {
+    var r2 = function (x) { return Math.round(x * 100) / 100; };
+    var plan = data.plan || [], lines = plan.filter(function (l) { return l.type !== 'Virement'; });
+    var own = function (e) {
+      var exact = e.cat + ' > ' + e.sub, hit = -1;
+      lines.forEach(function (l, i) { if (hit < 0 && l.cats.indexOf(exact) >= 0) hit = i; });
+      if (hit < 0) lines.forEach(function (l, i) { if (hit < 0 && l.cats.indexOf(e.cat) >= 0) hit = i; });
+      return hit;
+    };
+    var spent = lines.map(function () { return 0; }), off = {};
+    expenses(data).forEach(function (e) {
+      if (e.ym !== ym) return;
+      var i = own(e), name = e.sub || e.cat;
+      if (i >= 0) spent[i] += e.amount; else off[name] = (off[name] || 0) + e.amount;
+    });
+    var postes = [];
+    lines.forEach(function (l, i) {
+      var p = postes.filter(function (x) { return x.name === l.poste; })[0];
+      if (!p) postes.push(p = { name: l.poste, budget: 0, actual: 0, lines: [] });
+      p.lines.push({ name: l.line, budget: l.amount, actual: r2(spent[i]) });
+      p.budget = r2(p.budget + l.amount); p.actual = r2(p.actual + spent[i]);
+    });
+    var offList = Object.keys(off).map(function (n) { return { name: n, actual: r2(off[n]) }; }).filter(function (o) { return o.actual; })
+      .sort(function (a, b) { return b.actual - a.actual; });
+    var transfers = plan.filter(function (l) { return l.type === 'Virement'; }).map(function (l) { return { name: l.line, amount: l.amount }; });
+    var sum = function (list, k) { return r2(list.reduce(function (s, x) { return s + x[k]; }, 0)); };
+    var budgetTotal = sum(postes, 'budget'), transferTotal = sum(transfers, 'amount');
+    return { postes: postes, off: offList, budget: budgetTotal, actual: r2(sum(postes, 'actual') + sum(offList, 'actual')), transfers: transfers,
+      transferTotal: transferTotal, total: r2(budgetTotal + transferTotal) };
+  }
+
+  return { budget: budget, where: where, daysIn: daysIn, addMonths: addMonths, periodMonths: periodMonths, expenses: expenses, month: month, balanceCurve: balanceCurve, plan: plan,
     shares: shares, dashboard: dashboard, evolution: evolution, catSlots: catSlots, suggest: suggest, topSubs: topSubs,
     catOrder: catOrder, norm: norm };
 })();

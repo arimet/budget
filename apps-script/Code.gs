@@ -5,6 +5,7 @@
 var TABS = {
   'Charges fixes': ['Nom', 'CB / Chèque', 'Montant', 'Jour', 'Catégorie', 'Sous-catégorie', 'Pour', 'Mois', 'Début', 'Fin'],
   'Budgets': ['Catégorie', 'Sous-catégorie', 'Libellé', 'Montant mensuel', 'Depuis'],
+  'Plan': ['Type', 'Poste', 'Ligne', 'Montant', 'Catégories'],
   'Catégories': ['Catégorie', 'Sous-catégorie', 'Emoji', 'Mots-clés'],
   'Personnes': ['Nom']
 };
@@ -206,6 +207,7 @@ function onOpen() {
     .addItem('Tester la banque', 'testBank');
   // Import.gs exists only while a one-off import of bank statements is pending.
   if (typeof importReleves === 'function') menu.addItem('Importer les relevés', 'importReleves');
+  if (typeof importPlan === 'function') menu.addItem('Écrire le plan de budget', 'importPlan');
   menu.addToUi();
 }
 
@@ -346,6 +348,7 @@ function getData(fresh) {
     fixed: readFixed(ss, ctx),
     trash: readTrash(ss, ctx.tz),
     savings: readSavings(ss),
+    plan: readPlan(ss),
     months: monthTabs(ss).map(function (t) { return readMonth(t.sh, ctx); }),
     bank: bankInfo()
   };
@@ -378,6 +381,16 @@ function dropData() {
   var c = CacheService.getScriptCache();
   c.remove('DATA');
   c.put('GEN', String(Date.now()) + Math.random(), 21600);
+}
+
+// The household's monthly plan (tab "Plan"): spending lines grouped in postes, each fed by the categories listed in
+// "Catégories" ("Alimentation > Courses, Shopping"), and the transfers made on pay day (Type "Virement").
+function readPlan(ss) {
+  if (!ss.getSheetByName('Plan')) return [];
+  return rows(ss, 'Plan').filter(function (r) { return str(r['Ligne']); }).map(function (r) {
+    return { type: /^virement/i.test(str(r['Type'])) ? 'Virement' : 'Dépense', poste: str(r['Poste']), line: str(r['Ligne']), amount: num(r['Montant']),
+      cats: list(r['Catégories']) };
+  });
 }
 
 function readFixed(ss, ctx) {

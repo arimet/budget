@@ -132,4 +132,28 @@ assert.equal(Calc.catSlots(data)['Logement'], 0);
   assert.deepEqual(plain([w.total, w.totalAvg, w.income, w.incomeAvg]), [[1300, 1650, 800], 1475, [2000, 0, 0], 1000]);
 }
 
+// The budget plan against one month: each line with what was spent on its categories, what no line covers, the transfers.
+{
+  let k = 0;
+  const r = (date, label, debit, cat, sub, credit = 0, forecast = false) => ({ id: 'b' + k++, row: 0, date, means: '', label, credit, debit, cat, sub, who: ['Foyer'], forecast, envelope: false });
+  const data = { plan: [
+    { type: 'Dépense', poste: 'Charges fixes', line: 'Logement', amount: 900, cats: ['Logement'] },
+    { type: 'Dépense', poste: 'Le reste', line: 'Travaux', amount: 50, cats: ['Logement > Travaux & entretien'] },
+    { type: 'Dépense', poste: 'Le reste', line: 'Vêtements', amount: 60, cats: ['Shopping > Vêtements & chaussures'] },
+    { type: 'Virement', poste: 'Épargne', line: 'Livret', amount: 600, cats: [] },
+    { type: 'Virement', poste: 'Épargne', line: 'Vacances', amount: 150, cats: [] }],
+    months: [{ ym: '2026-11', opening: 0, rows: [r('2026-11-05', 'Prêt', 800, 'Logement', 'Loyer / crédit'), r('2026-11-06', 'Leroy', 70, 'Logement', 'Travaux & entretien'),
+      r('2026-11-07', 'Boutique', 100, 'Shopping', 'Vêtements & chaussures'), r('2026-11-08', 'Retour', 0, 'Shopping', 'Vêtements & chaussures', 30),
+      r('2026-11-09', 'Resto', 45, 'Alimentation', 'Restaurants'), r('2026-11-28', 'Salaire', 0, 'Revenus', 'Salaires', 2000), r('', 'Netflix', 15, 'Logement', 'Eau', 0, true)] },
+      { ym: '2026-10', opening: 0, rows: [r('2026-10-05', 'Prêt', 800, 'Logement', 'Loyer / crédit')] }] };
+  const b = Calc.budget(data, '2026-11');
+  assert.deepEqual(plain(b.postes.map((p) => [p.name, p.budget, p.actual, p.lines.map((l) => [l.name, l.budget, l.actual])])), [
+    ['Charges fixes', 900, 800, [['Logement', 900, 800]]],
+    ['Le reste', 110, 140, [['Travaux', 50, 70], ['Vêtements', 60, 70]]]], 'the most precise line takes the expense; a return lowers what was spent');
+  assert.deepEqual(plain(b.off), [{ name: 'Restaurants', actual: 45 }], 'spent on what no line covers');
+  assert.deepEqual(plain([b.budget, b.actual, b.transfers, b.transferTotal, b.total]),
+    [1010, 985, [{ name: 'Livret', amount: 600 }, { name: 'Vacances', amount: 150 }], 750, 1760]);
+  assert.equal(Calc.budget({ months: [] }, '2026-11').postes.length, 0, 'no plan');
+}
+
 console.log('calc: all checks pass');
