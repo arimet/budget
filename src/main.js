@@ -66,7 +66,7 @@ function applyTheme(t) {
   try { localStorage.setItem('budget-theme', t); } catch (e) { /* this visit only */ }
   if (t === 'auto') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = t;
   var dark = t === 'dark' || (t === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-  document.querySelectorAll('meta[name=theme-color]').forEach(function (m) { m.setAttribute('content', dark ? '#1d1c25' : '#e7e5f0'); });
+  document.querySelectorAll('meta[name=theme-color]').forEach(function (m) { m.setAttribute('content', dark ? '#1b1e26' : '#eef0fa'); });
 }
 function stepper(prefix, label, short) {
   return '<div class="stepper"><button data-action="' + prefix + '-prev" aria-label="Précédent">' + icon('prev') + '</button><span><b class="long">' + esc(label) +
@@ -849,12 +849,70 @@ function periodLabel(kind, anchor) {
   return monthName(anchor);
 }
 
+// Synthèse has two views: where the money goes on average (the default), and one period in detail.
+function dashView() {
+  if (!S.dashView) { try { S.dashView = localStorage.getItem('budget-dashview') || 'where'; } catch (e) { S.dashView = 'where'; } }
+  return S.dashView;
+}
+function dashTabs() {
+  return '<div class="seg wide">' + [['where', 'Où part l\'argent'], ['period', 'Par période']].map(function (k) {
+    return '<button type="button" data-action="dash-view" data-view="' + k[0] + '" aria-pressed="' + (dashView() === k[0]) + '">' + k[1] + '</button>';
+  }).join('') + '</div>';
+}
+
+// Five postes on average per month; a poste unfolds right under its row into its lines, a line into its months and
+// biggest payees. Below, the same postes month by month.
+function viewWhere() {
+  var w = Calc.where(S.data, today()), st = S.wh = S.wh || { open: null, line: null };
+  if (!w.months.length) return '<p class="empty">Aucun mois à analyser pour l\'instant.</p>';
+  var label = function (m) { return cap(shortMonth(m.ym)) + (m.partial ? '*' : ''); };
+  var row = function (action, key, name, a, max, on, inner) {
+    return '<div class="wh-row' + (on ? ' sel' : '') + '"><button type="button" data-action="' + action + '" data-key="' + esc(key) + '" aria-expanded="' + on + '">' +
+      '<span class="wh-name">' + esc(name) + '</span><span class="wh-track"><i style="width:' + Math.max(0, Math.min(100, a / max * 100)).toFixed(1) + '%"></i></span>' +
+      '<span class="wh-amt' + (a < 0 ? ' neg' : '') + '">' + money0(a) + ' <small>/ mois</small></span>' + icon('next', 'chev') + '</button>' + (on ? inner() : '') + '</div>';
+  };
+  var detail = function (g) {
+    var max = Math.max.apply(null, g.subs.map(function (x) { return x.avg; }).concat([1]));
+    return '<div class="wh-sub"><p>' + esc(g.desc) + '</p>' + g.subs.map(function (x) {
+      return row('wh-line', x.name, x.name, x.avg, max, st.line === x.name, function () {
+        return '<div class="wh-more"><div class="wh-grid">' + w.months.map(function (m, i) {
+          return '<div' + (m.partial ? ' class="part"' : '') + '><span>' + label(m) + '</span>' + money0(x.values[i]) + '</div>';
+        }).join('') + '</div><h3>Les plus gros postes</h3><ul>' + x.top.map(function (t) {
+          return '<li><span>' + esc(t[0]) + ' <small>' + t[2] + ' fois</small></span><b>' + money0(t[1]) + '</b></li>';
+        }).join('') + '</ul></div>';
+      });
+    }).join('') + '</div>';
+  };
+  var gap = w.incomeAvg - w.totalAvg, n = w.fullCount;
+  var out = '<div class="tiles"><div class="tile hero"><small>Dépenses par mois</small><b>' + money0(w.totalAvg) + '</b><em>en moyenne sur ' + n + ' mois</em></div>' +
+    '<div class="tile"><small>Revenus par mois</small><b>' + money0(w.incomeAvg) + '</b></div>' +
+    '<div class="tile' + (gap < 0 ? ' short' : '') + '"><small>Écart</small><b class="' + (gap < 0 ? 'neg' : '') + '">' + money0(gap) + '</b></div></div>';
+  var max = Math.max.apply(null, w.groups.map(function (g) { return g.avg; }).concat([1]));
+  out += '<div class="wh">' + w.groups.map(function (g) {
+    return row('wh-poste', g.key, g.name, g.avg, max, st.open === g.key, function () { return detail(g); });
+  }).join('') + '<div class="wh-row tot"><b>Total</b><span class="wh-amt">' + money0(w.totalAvg) + ' <small>/ mois</small></span></div></div>' +
+    '<p class="hint">Touche un poste pour le déplier, puis une ligne pour voir ses mois et ses plus gros achats.</p>';
+  var cellMax = Math.max.apply(null, w.groups.map(function (g) { return Math.max.apply(null, g.values.concat([g.avg])); }).concat([1]));
+  var cell = function (g, v) {
+    return '<td class="v' + (st.open === g.key ? ' on' : '') + '" style="--w:' + Math.max(0, Math.min(100, v / cellMax * 100)).toFixed(1) + '%">' + money0(v) + '</td>';
+  };
+  out += '<h2>Mois par mois</h2><div class="wh-scroll"><table><thead><tr><th>Mois</th>' + w.groups.map(function (g) {
+    return '<th' + (st.open === g.key ? ' class="on"' : '') + '><button type="button" data-action="wh-poste" data-key="' + g.key + '">' + esc(g.name) + '</button></th>';
+  }).join('') + '<th>Total</th></tr></thead><tbody>' + w.months.map(function (m, i) {
+    return '<tr' + (m.partial ? ' class="part"' : '') + '><td>' + label(m) + '</td>' + w.groups.map(function (g) { return cell(g, g.values[i]); }).join('') +
+      '<td>' + money0(w.total[i]) + '</td></tr>';
+  }).join('') + '<tr class="avg"><td>Moyenne</td>' + w.groups.map(function (g) { return cell(g, g.avg); }).join('') + '<td>' + money0(w.totalAvg) + '</td></tr></tbody></table></div>' +
+    '<p class="hint">* Mois en cours : il s\'affiche mais ne compte pas dans la moyenne. Le classement suit les catégories du Sheets.</p>';
+  return out;
+}
+
 function viewDash() {
+  if (dashView() === 'where') return topbar('Synthèse') + dashTabs() + viewWhere();
   var d = S.dash, months = Calc.periodMonths(d.kind, S.ym);
   var res = Calc.dashboard(S.data, months, d);
   var opt = function (v, label, sel) { return '<option value="' + esc(v) + '"' + (v === sel ? ' selected' : '') + '>' + esc(label) + '</option>'; };
   var active = (d.person ? 1 : 0) + (d.cat ? 1 : 0);
-  var out = topbar('Synthèse') + '<div class="toolbar"><div class="seg">' + [['month', 'Mois'], ['quarter', 'Trimestre'], ['year', 'Année']].map(function (k) {
+  var out = topbar('Synthèse') + dashTabs() + '<div class="toolbar"><div class="seg">' + [['month', 'Mois'], ['quarter', 'Trimestre'], ['year', 'Année']].map(function (k) {
       return '<button data-action="dash-kind" data-kind="' + k[0] + '" aria-pressed="' + (d.kind === k[0]) + '">' + k[1] + '</button>';
     }).join('') + '</div><button type="button" class="pill filterbtn' + (active ? ' on' : '') + '" data-action="filters">' + icon('filter') +
     (active ? [d.person, d.cat].filter(Boolean).join(' · ') : 'Filtres') + '</button></div>';
@@ -1047,6 +1105,17 @@ document.addEventListener('click', function (ev) {
     case 'set-filter':
       S.dash[t.dataset.key] = t.dataset.value; render(); openFilters(); break;
     case 'dash-kind': S.dash.kind = t.dataset.kind; render(); break;
+    case 'dash-view':
+      S.dashView = t.dataset.view;
+      try { localStorage.setItem('budget-dashview', S.dashView); } catch (e) { /* this visit only */ }
+      render(); break;
+    case 'wh-poste':
+      var fromTable = !!t.closest('table');
+      S.wh.open = S.wh.open === t.dataset.key && !fromTable ? null : t.dataset.key; S.wh.line = null;
+      render();
+      if (fromTable && $('.wh-row.sel')) $('.wh-row.sel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+      break;
+    case 'wh-line': S.wh.line = S.wh.line === t.dataset.key ? null : t.dataset.key; render(); break;
     case 'dash-evo': S.dash.evo = t.dataset.evo; render(); break;
     case 'toggle': S.open[t.dataset.key] = !S.open[t.dataset.key]; render(); break;
     case 'prepare-month':

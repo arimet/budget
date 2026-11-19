@@ -204,7 +204,62 @@ export var Calc = (function () {
     return out;
   }
 
-  return { daysIn: daysIn, addMonths: addMonths, periodMonths: periodMonths, expenses: expenses, month: month, balanceCurve: balanceCurve, plan: plan,
+  // ---------------------------------------------------------- where the money goes
+  // Five postes per month (fixed charges, groceries, delivery, health, the rest), each with its lines (sub-categories),
+  // their biggest payees, and averages over the complete months: the running month shows but does not count.
+  var POSTES = [
+    ['fixes', 'Charges fixes', 'Prêt ou loyer, énergie, copropriété, impôts, assurances, abonnements, garde, animaux, coiffeur et transport.'],
+    ['courses', 'Courses', 'Supermarché, boulangerie et marché.'],
+    ['livraison', 'Livraison et à emporter', 'Deliveroo, fast-foods et plats à emporter.'],
+    ['sante', 'Santé', 'Médecins et pharmacie, moins les remboursements.'],
+    ['reste', 'Le reste', 'Tout ce qui n\'est pas ci-dessus : restaurants, vêtements, sorties, vacances, achats en ligne, cadeaux…']
+  ];
+  var FIXED_CATS = ['Impôts & finances', 'Assurances', 'Abonnements & télécoms', 'Éducation & garde', 'Animaux', 'Transport'];
+  function poste(e) {
+    if (e.cat === 'Logement') return e.sub === 'Travaux & entretien' || e.sub === 'Équipement maison' ? 'reste' : 'fixes';
+    if (FIXED_CATS.indexOf(e.cat) >= 0 || e.sub === 'Coiffeur') return 'fixes';
+    if (e.cat === 'Alimentation' && (e.sub === 'Courses' || e.sub === 'Boulangerie & marché')) return 'courses';
+    if (e.sub === 'Livraison & à emporter') return 'livraison';
+    if (e.cat === 'Santé') return 'sante';
+    return 'reste';
+  }
+  function where(data, today) {
+    var cur = today.slice(0, 7), r2 = function (x) { return Math.round(x * 100) / 100; };
+    var months = data.months.filter(function (m) { return m.ym <= cur; }).map(function (m) { return { ym: m.ym, partial: m.ym === cur }; })
+      .sort(function (a, b) { return a.ym < b.ym ? -1 : 1; });
+    var at = {}, full = [];
+    months.forEach(function (m, i) { at[m.ym] = i; if (!m.partial) full.push(i); });
+    if (!full.length) full = months.map(function (_, i) { return i; });
+    var avg = function (v) { return full.length ? r2(full.reduce(function (s, i) { return s + v[i]; }, 0) / full.length) : 0; };
+    var zeros = function () { return months.map(function () { return 0; }); };
+    var lines = {};
+    expenses(data).forEach(function (e) {
+      if (!(e.ym in at)) return;
+      var key = poste(e), name = e.sub || e.cat, id = key + '|' + name;
+      var l = lines[id] = lines[id] || { key: key, name: name, values: zeros(), payees: {} };
+      l.values[at[e.ym]] += e.amount;
+      var p = l.payees[e.label || name] = l.payees[e.label || name] || [0, 0];
+      p[0] += e.amount; p[1]++;
+    });
+    var groups = POSTES.map(function (p) {
+      var subs = Object.keys(lines).filter(function (id) { return lines[id].key === p[0]; }).map(function (id) {
+        var l = lines[id];
+        return { name: l.name, values: l.values.map(r2), avg: avg(l.values),
+          top: Object.keys(l.payees).map(function (n) { return [n, r2(l.payees[n][0]), l.payees[n][1]]; })
+            .sort(function (a, b) { return Math.abs(b[1]) - Math.abs(a[1]); }).slice(0, 6) };
+      }).sort(function (a, b) { return b.avg - a.avg; });
+      var values = zeros().map(function (_, i) { return r2(subs.reduce(function (s, x) { return s + x.values[i]; }, 0)); });
+      return { key: p[0], name: p[1], desc: p[2], subs: subs, values: values, avg: avg(values) };
+    });
+    var total = zeros().map(function (_, i) { return r2(groups.reduce(function (s, g) { return s + g.values[i]; }, 0)); });
+    var income = zeros();
+    data.months.forEach(function (m) {
+      if (m.ym in at) m.rows.forEach(function (r) { if (!r.forecast && r.cat === 'Revenus') income[at[m.ym]] += r.credit - r.debit; });
+    });
+    return { months: months, groups: groups, total: total, totalAvg: avg(total), income: income.map(r2), incomeAvg: avg(income), fullCount: full.length };
+  }
+
+  return { where: where, daysIn: daysIn, addMonths: addMonths, periodMonths: periodMonths, expenses: expenses, month: month, balanceCurve: balanceCurve, plan: plan,
     shares: shares, dashboard: dashboard, evolution: evolution, catSlots: catSlots, suggest: suggest, topSubs: topSubs,
     catOrder: catOrder, norm: norm };
 })();

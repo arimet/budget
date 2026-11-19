@@ -107,4 +107,29 @@ assert.deepEqual(plain(Calc.topSubs({ ...data, months: [] }, 6, '2026-11-10')), 
 // colour slots follow all-time spending
 assert.equal(Calc.catSlots(data)['Logement'], 0);
 
+// Where the money goes: five postes per month, the detail of each, averages over the complete months only.
+{
+  let k = 0;
+  const r = (date, label, debit, cat, sub, credit = 0, forecast = false) => ({ id: 'w' + k++, row: 0, date, means: '', label, credit, debit, cat, sub, who: ['Foyer'], forecast, envelope: false });
+  const w = Calc.where({ months: [
+    { ym: '2026-09', opening: 0, rows: [r('2026-09-05', 'Prêt', 800, 'Logement', 'Loyer / crédit'), r('2026-09-06', 'Auchan', 300, 'Alimentation', 'Courses'),
+      r('2026-09-07', 'Deliveroo', 40, 'Alimentation', 'Livraison & à emporter'), r('2026-09-08', 'Dr A', 30, 'Santé', 'Médecin'), r('2026-09-20', 'CPAM', 0, 'Santé', 'Remboursements', 20),
+      r('2026-09-10', 'Boutique', 100, 'Shopping', 'Vêtements & chaussures'), r('2026-09-12', 'Leroy', 50, 'Logement', 'Travaux & entretien'),
+      r('2026-09-28', 'Salaire', 0, 'Revenus', 'Salaires', 2000), r('2026-09-29', 'Vers livret', 100, 'Divers', 'Virements internes')] },
+    { ym: '2026-10', opening: 0, rows: [r('2026-10-05', 'Prêt', 800, 'Logement', 'Loyer / crédit'), r('2026-10-06', 'Auchan', 500, 'Alimentation', 'Courses'),
+      r('2026-10-09', 'Coiffeur', 30, 'Soins & beauté', 'Coiffeur'), r('2026-10-10', 'Boutique', 300, 'Shopping', 'Vêtements & chaussures'), r('2026-10-11', 'Kiabi', 20, 'Shopping', 'Vêtements & chaussures')] },
+    { ym: '2026-11', opening: 0, rows: [r('2026-11-05', 'Prêt', 800, 'Logement', 'Loyer / crédit'), r('', 'Netflix', 15, 'Abonnements & télécoms', 'Streaming & musique', 0, true)] },
+    { ym: '2026-12', opening: 0, rows: [r('', 'Prêt', 800, 'Logement', 'Loyer / crédit', 0, true)] },
+  ] }, '2026-11-10');
+  assert.deepEqual(plain(w.months), [{ ym: '2026-09', partial: false }, { ym: '2026-10', partial: false }, { ym: '2026-11', partial: true }], 'months up to today; the running one is partial');
+  const g = (key) => w.groups.find((x) => x.key === key);
+  assert.deepEqual(plain(w.groups.map((x) => [x.key, x.values, x.avg])),
+    [['fixes', [800, 830, 800], 815], ['courses', [300, 500, 0], 400], ['livraison', [40, 0, 0], 20], ['sante', [10, 0, 0], 5], ['reste', [150, 320, 0], 235]]);
+  assert.deepEqual(plain(g('fixes').subs.map((x) => x.name)), ['Loyer / crédit', 'Coiffeur'], 'the hairdresser is a fixed charge; biggest average first');
+  assert.deepEqual(plain(g('sante').subs.map((x) => [x.name, x.avg])), [['Médecin', 15], ['Remboursements', -10]]);
+  assert.deepEqual(plain(g('reste').subs.map((x) => [x.name, x.values, x.avg])), [['Vêtements & chaussures', [100, 320, 0], 210], ['Travaux & entretien', [50, 0, 0], 25]]);
+  assert.deepEqual(plain(g('reste').subs[0].top), [['Boutique', 400, 2], ['Kiabi', 20, 1]], 'biggest payees of the line');
+  assert.deepEqual(plain([w.total, w.totalAvg, w.income, w.incomeAvg]), [[1300, 1650, 800], 1475, [2000, 0, 0], 1000]);
+}
+
 console.log('calc: all checks pass');
