@@ -702,14 +702,24 @@ function viewBank() {
     return items ? '<section class="diff"><h2>' + title + ' <span>' + hint + '</span></h2><ul class="implist">' + items + '</ul></section>' : '';
   };
   var out = topbar(S.impTitle, '<button type="button" class="iconbtn" data-action="bank-close" aria-label="Fermer">' + icon('close') + '</button>');
-  out += '<p class="hint">' + r.known.length + ' identique' + (r.known.length > 1 ? 's' : '') + ' · ' + r.differs.length + ' différente' +
-    (r.differs.length > 1 ? 's' : '') + ' · ' + r.missing.length + ' manquante' + (r.missing.length > 1 ? 's' : '') +
+  out += '<p class="hint">' + r.known.length + ' identique' + (r.known.length > 1 ? 's' : '') + ' · ' + r.differs.length + ' à vérifier · ' +
+    r.missing.length + ' manquante' + (r.missing.length > 1 ? 's' : '') +
     (r.skipped ? ' · ' + r.skipped + ' hors du mois laissée' + (r.skipped > 1 ? 's' : '') + ' de côté' : '') + '</p>';
-  out += section('Cette opération diffère', 'cocher pour reprendre la banque', r.differs.map(function (x, i) {
+  // Probably one operation typed differently (same name, or only a close amount): the app asks, and does nothing without an answer.
+  out += section('Peut-être la même opération', 'à toi de dire', r.differs.map(function (x, i) {
     var w = x.row, amt = w.debit - w.credit;
-    return line('fix', i, w.label, 'Sheets : ' + money2(amt) + ' le ' + shortDate(w.date) + '<br>Banque : <b>' + money2(x.op.amount) + '</b> le ' +
-      shortDate(x.op.date) + ' · ' + esc(x.op.merchant), '', false);
-  }).join(''));
+    if (x.choice === undefined) x.choice = x.sure ? 'same' : '';
+    var s = Calc.suggest(S.data, x.op.merchant.replace(/\./g, '')) || { cat: 'Divers', sub: 'À classer' };
+    return '<li class="imp dup"><span class="txt"><b>' + esc(w.label) + '</b><small>Sheets : ' + money2(amt) + ' le ' + shortDate(w.date) +
+      '<br>Banque : <b>' + money2(x.op.amount) + '</b> le ' + shortDate(x.op.date) + ' · ' + esc(x.op.merchant) + '</small>' +
+      '<small class="impnote">' + (x.why === 'amount' ? 'Montant presque identique, à quelques jours près.' : 'Même nom, montant ou date différents.') + '</small></span>' +
+      '<div class="seg wide">' + [['same', 'Même opération'], ['new', 'Deux opérations']].map(function (c) {
+        return '<button type="button" data-action="dup-choice" data-i="' + i + '" data-choice="' + c[0] + '" aria-pressed="' + (x.choice === c[0]) + '">' + c[1] + '</button>';
+      }).join('') + '</div><div class="dupnew"' + (x.choice === 'new' ? '' : ' hidden') + '>' +
+      '<input class="input implabel" data-duplabel="' + i + '" value="' + esc(x.op.merchant) + '" aria-label="Libellé" autocomplete="off">' +
+      '<select class="input impcat" data-dupcat="' + i + '" aria-label="Catégorie">' + catOptions(s.cat, s.sub) + '</select></div></li>';
+  }).join('')) + (r.differs.length ? '<p class="hint">Même opération : la ligne du Sheets prend le montant et la date de la banque. Deux opérations : ' +
+    'la ligne de la banque est ajoutée. Sans choix, rien ne change.</p>' : '');
   out += section('Opérations manquantes', 'à ajouter', r.missing.map(function (m, i) {
     return line('add', i, m.op.merchant, shortDate(m.op.date) + ' · ' + money2(m.op.amount),
       '<input class="input implabel" data-implabel="' + i + '" value="' + esc(m.op.merchant) + '" aria-label="Libellé" autocomplete="off">' +
@@ -725,6 +735,11 @@ function viewBank() {
   if (r.known.length) out += '<details class="acc"><summary><span class="acc-t">Identiques</span><span class="acc-h">' + r.known.length + ' déjà dans le Sheets</span>' +
     icon('next', 'chev') + '</summary><div class="acc-b"><div class="well">' + r.known.map(function (k) { return rowHtml(Object.assign({}, k.row, { amount: k.row.debit - k.row.credit }), true); }).join('') +
     '</div></div></details>';
+  if (r.orphans.length) out += '<details class="acc"><summary><span class="acc-t">Dans le Sheets, pas à la banque</span><span class="acc-h">' + r.orphans.length +
+    ' ligne' + (r.orphans.length > 1 ? 's' : '') + '</span>' + icon('next', 'chev') + '</summary><div class="acc-b"><p class="hint">Un chèque pas encore encaissé, ' +
+    'un paiement pas encore débité… ou une ligne saisie en double, à supprimer depuis l\'écran Mois.</p><ul class="well">' + r.orphans.map(function (o) {
+      return '<li class="kv"><span>' + esc(o.label) + ' <small>' + shortDate(o.date) + '</small></span><b class="num">' + money2(o.debit - o.credit) + '</b></li>';
+    }).join('') + '</ul></div></details>';
   var n = r.differs.length + r.missing.length + r.toPass.length;
   return out + '<div class="actions">' + (n ? '<button type="button" class="btn primary" data-action="import-yes">Mettre à jour le Sheets</button>' : '<p class="empty">Tout est à jour.</p>') +
     '<button type="button" class="btn" data-action="bank-close">Fermer</button></div>';
@@ -732,14 +747,22 @@ function viewBank() {
 
 function importActions() {
   var r = S.imp, out = [];
+  var cbOf = function (op) { return 'CB du ' + op.date.slice(8) + '/' + op.date.slice(5, 7); };
+  // "Peut-être la même opération": the same one takes the bank's amount and date (it keeps its id), a second one is added.
+  r.differs.forEach(function (x, i) {
+    var w = x.row;
+    if (x.choice === 'same') out.push({ type: 'fix', expense: { id: w.id, date: x.op.date, amount: x.op.amount, cat: w.cat, sub: w.sub, label: w.label, who: w.who,
+      means: /^CB/.test(w.means) ? cbOf(x.op) : w.means } });
+    else if (x.choice === 'new') {
+      var dc = $('[data-dupcat="' + i + '"]').value.split('|');
+      out.push({ type: 'add', expense: { date: x.op.date, amount: x.op.amount, cat: dc[0], sub: dc[1],
+        label: $('[data-duplabel="' + i + '"]').value.trim() || x.op.merchant, who: [S.data.people[0]], means: x.op.card ? cbOf(x.op) : '' } });
+    }
+  });
   document.querySelectorAll('[data-imp]').forEach(function (box) {
     if (!box.checked) return;
     var k = box.dataset.imp.split(':'), i = +k[1];
-    if (k[0] === 'fix') {
-      var x = r.differs[i], w = x.row, cb = /^CB/.test(w.means);
-      out.push({ type: 'fix', expense: { id: w.id, date: x.op.date, amount: x.op.amount, cat: w.cat, sub: w.sub, label: w.label, who: w.who,
-        means: cb ? 'CB du ' + x.op.date.slice(8) + '/' + x.op.date.slice(5, 7) : w.means } });
-    } else if (k[0] === 'pass') {
+    if (k[0] === 'pass') {
       var p = r.toPass[i];
       out.push({ type: 'pass', id: p.forecast.id, amount: Math.abs(p.op.amount), date: p.op.date });
     } else {
@@ -1124,6 +1147,13 @@ document.addEventListener('click', function (ev) {
         showDiff(Bank.reconcile(S.data, Bank.fromApi(r.transactions), ym), 'Banque · ' + monthName(ym));
       }).catch(function (e) { busy(t, false); fail(e); load(true); }); break;
     case 'bank-close': S.tab = S.back; render(); break;
+    case 'dup-choice':
+      // In place: a full render would wipe the labels and categories being edited further down.
+      var dup = S.imp.differs[+t.dataset.i], li = t.closest('.dup');
+      dup.choice = dup.choice === t.dataset.choice ? '' : t.dataset.choice;
+      li.querySelectorAll('[data-choice]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.choice === dup.choice)); });
+      li.querySelector('.dupnew').hidden = dup.choice !== 'new';
+      break;
     case 'import-yes':
       var acts = importActions();
       if (!acts.length) { S.tab = S.back; render(); return; }

@@ -612,6 +612,11 @@ body.adding .nav .navadd{box-shadow:var(--pressed)}
 .wh-sub > .wh-row:first-child{border-top:0}
 .well .kv b{color:var(--text)}
 @media (max-width:560px){ .wh-line{grid-template-columns:minmax(0,1fr) auto} .wh-line .wh-track{grid-column:1/-1;grid-row:2} }
+/* Bank page: a probable duplicate, with its two-way choice. */
+.imp.dup{flex-direction:column;align-items:stretch;gap:10px}
+.imp.dup .txt{display:flex;flex-direction:column;gap:2px}
+.imp.dup .txt b{color:var(--text)} .imp.dup .txt small{font-size:13px;color:var(--text-2)} .imp.dup .txt small b{font-weight:700}
+.dupnew{display:flex;flex-wrap:wrap;gap:8px}
 /* The month stepper: one pill, plain arrows inside. */
 .stepper{box-shadow:var(--flat)}
 .stepper button{box-shadow:none;background:none}

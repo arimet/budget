@@ -44,10 +44,11 @@ function days(a, b) { return Math.abs((new Date(a) - new Date(b)) / 864e5); }
 function words(s) { return Calc.norm(s).split(' ').filter(function (w) { return w && !STOP[w]; }); }
 
 // Bank lines against the Sheets, in passes so a loose match never takes a row an exact one needs:
-// known (same amount, close date), differs (same name, close date, other amount or date), toPass (a forecast that went
-// through), missing; then waiting = forecasts not passed. `ym`: only lines dated in that month, 1st to last day (the others count as skipped).
+// known (same amount, close date), differs (probably the same line typed differently: same name, or only a close
+// amount, which the app asks about), toPass (a forecast that went through), missing; then waiting = forecasts not
+// passed, and orphans = real lines of the Sheets the bank does not show. `ym`: only lines dated in that month, 1st to last day (the others count as skipped).
 function reconcile(data, ops, ym) {
-  var tabs = {}, used = {}, out = { known: [], differs: [], toPass: [], missing: [], waiting: [], skipped: 0 };
+  var tabs = {}, used = {}, out = { known: [], differs: [], toPass: [], missing: [], waiting: [], orphans: [], skipped: 0 };
   data.months.forEach(function (m) { tabs[m.ym] = m; });
   var todo = [], seen = {};
   ops.forEach(function (op) {
@@ -58,19 +59,29 @@ function reconcile(data, ops, ym) {
   });
   var free = function (r) { return !used[r.id]; };
   var near = function (r, op, n) { return days(r.date, op.date) <= n || days(r.date, op.posted) <= n; };
-  var pass = function (find, keep) {
+  // `rank`, when given, picks the best candidate (lowest value) instead of the first.
+  var pass = function (find, keep, rank) {
     todo = todo.filter(function (t) {
-      var r = t.m.rows.filter(function (x) { return free(x) && find(x, t.op); })[0];
+      var found = t.m.rows.filter(function (x) { return free(x) && find(x, t.op); });
+      if (rank) found.sort(function (a, b) { return rank(a, t.op) - rank(b, t.op); });
+      var r = found[0];
       if (!r) return true;
       used[r.id] = 1; keep(t.op, r); return false;
     });
   };
+  var signed = function (r) { return r.debit - r.credit; };
+  // A typo in the amount: within 1 €, or 3 % for bigger sums (5 € at most).
+  var close = function (r, op) { return Math.abs(signed(r) - op.amount) <= Math.min(5, Math.max(1, Math.abs(op.amount) * 0.03)) + 0.005; };
   pass(function (r, op) { return !r.forecast && Math.abs(r.debit - r.credit - op.amount) < 0.005 && near(r, op, 3); },
     function (op, r) { out.known.push({ op: op, row: r }); });
   pass(function (r, op) {
     var w = words(r.label).filter(function (x) { return x.length >= 3; }), o = words(op.label + ' ' + op.merchant);
     return !r.forecast && near(r, op, 5) && (r.debit - r.credit > 0) === (op.amount > 0) && w.some(function (x) { return o.indexOf(x) >= 0; });
-  }, function (op, r) { out.differs.push({ op: op, row: r }); });
+  }, function (op, r) { out.differs.push({ op: op, row: r, why: 'name', sure: close(r, op) }); });
+  // Another name but nearly the same amount a few days apart: maybe the same line, typed by hand. Asked, never assumed.
+  pass(function (r, op) { return !r.forecast && near(r, op, 4) && (signed(r) > 0) === (op.amount > 0) && close(r, op); },
+    function (op, r) { out.differs.push({ op: op, row: r, why: 'amount', sure: false }); },
+    function (r, op) { return Math.abs(signed(r) - op.amount); });
   pass(function (r, op) {
     if (!r.forecast || r.envelope || (op.amount > 0 ? !r.debit : !r.credit)) return false;
     var w = words(r.label), o = words(op.label);
@@ -82,6 +93,11 @@ function reconcile(data, ops, ym) {
   });
   (ym ? [tabs[ym]].filter(Boolean) : Object.keys(seen).map(function (k) { return seen[k]; })).forEach(function (m) {
     m.rows.forEach(function (r) { if (r.forecast && !r.envelope && free(r)) out.waiting.push(r); });
+  });
+  // Typed in the Sheets, not at the bank: only up to the bank's last line (a card payment takes days to show).
+  var lastSeen = ops.reduce(function (d, op) { return op.posted > d ? op.posted : d; }, '');
+  Object.keys(seen).forEach(function (k) {
+    seen[k].rows.forEach(function (r) { if (!r.forecast && free(r) && r.date && r.date <= lastSeen && (r.cat !== 'Divers' || r.sub !== 'Virements internes')) out.orphans.push(r); });
   });
   return out;
 }

@@ -57,6 +57,27 @@ assert.equal(d2.skipped, 1, 'October is outside the month');
 const late = Bank.reconcile(data2, [{ posted: '2026-11-02', date: '2026-10-31', label: 'ACHAT CB X 31.10.26', amount: 4, card: true, merchant: 'X' }], '2026-11');
 assert.equal(late.skipped, 1, 'paid on 31 October, booked in November: October\'s');
 
+// Probable duplicates: a line typed with a slightly wrong amount and another name is offered as "the same?", never added
+// in silence; lines of the Sheets the bank does not show are listed too.
+const op = (posted, date, label, amount) => ({ posted, date, label, amount, card: /ACHAT CB/.test(label), merchant: Bank.merchant(label) });
+const data3 = { categories: [], months: [{ ym: '2026-11', tab: 'Novembre 2026', opening: 0, rows: [
+  row('2026-11-03', 'Essence', 83.4, 'Transport', 'Carburant', { id: 'gas' }),
+  row('2026-11-05', 'Auchan', 50, 'Alimentation', 'Courses', { id: 'auchan' }),
+  row('2026-11-06', 'Boulangerie', 6.4, 'Alimentation', 'Boulangerie & marché', { id: 'bread' }),
+  row('2026-11-07', 'Cadeau mamie', 40, 'Shopping', 'Cadeaux', { id: 'gift' }),
+  row('2026-11-20', 'Tapé hier', 12, 'Divers', 'Imprévus', { id: 'late' }),
+] }] };
+const d3 = Bank.reconcile(data3, [
+  op('2026-11-04', '2026-11-02', 'ACHAT CB CERTAS ESSOF13 02.11.26 CARTE NUMERO 337', 83.6),
+  op('2026-11-06', '2026-11-05', 'ACHAT CB AUCHAN.FR 05.11.26 CARTE NUMERO 337', 50.5),
+  op('2026-11-09', '2026-11-08', 'ACHAT CB MARIE BLACHERE 08.11.26 CARTE NUMERO 337', 9.9),
+  op('2026-11-10', '2026-11-10', 'PRELEVEMENT DE ORANGE SA', 44.99),
+], '2026-11');
+assert.deepEqual(plain(d3.differs.map((x) => [x.row.id, x.op.amount, x.why, x.sure])), [['auchan', 50.5, 'name', true], ['gas', 83.6, 'amount', false]],
+  'same name: surely the same; close amount only: asked');
+assert.deepEqual(plain(d3.missing.map((m) => m.op.merchant)), ['Marie Blachere', 'Orange Sa'], '9,90 is too far from the 6,40 typed: a new line');
+assert.deepEqual(plain(d3.orphans.map((r) => r.id)), ['bread', 'gift'], 'typed, not at the bank; a line dated after the last bank line is not one yet');
+
 // Transactions from the bank connection (Enable Banking): same shape as the CSV lines; pending ones are left out.
 const api = Bank.fromApi([
   { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '12.40', currency: 'EUR' }, booking_date: '2026-11-05',

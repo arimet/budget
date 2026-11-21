@@ -77,6 +77,8 @@ const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpens
   // The bank connection, connected for 3 months, with two lines of this month.
   bankConnect: () => ({ url: './' }),
   bankTransactions: () => ({ calls: 2, transactions: [
+    { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '6.60', currency: 'EUR' }, booking_date: today.slice(0, 8) + '03',
+      remittance_information: ['ACHAT CB MARIE BLACHERE 02.' + today.slice(5, 7) + '.' + today.slice(2, 4)] },
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '82.12', currency: 'EUR' }, booking_date: today.slice(0, 8) + '02',
       remittance_information: ['ACHAT CB AUCHAN 01.' + today.slice(5, 7) + '.' + today.slice(2, 4)] },
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '5.50', currency: 'EUR' }, booking_date: today.slice(0, 8) + '04',
