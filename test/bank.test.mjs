@@ -55,7 +55,8 @@ assert.deepEqual(plain(d2.missing.map((m) => m.op.merchant)), ['C.P.A.M. De Meur
 assert.deepEqual(plain(d2.waiting.map((f) => f.id)), ['prev:loyer'], 'not passed yet; budgets are not forecasts');
 assert.equal(d2.skipped, 1, 'October is outside the month');
 const late = Bank.reconcile(data2, [{ posted: '2026-11-02', date: '2026-10-31', label: 'ACHAT CB X 31.10.26', amount: 4, card: true, merchant: 'X' }], '2026-11');
-assert.equal(late.skipped, 1, 'paid on 31 October, booked in November: October\'s');
+assert.deepEqual([late.skipped, late.missing.length, late.missing[0].date], [0, 1, '2026-11-02'], 'paid on 31 October, booked in November: November\'s, at the bank\'s date');
+
 
 // Probable duplicates: a line typed with a slightly wrong amount and another name is offered as "the same?", never added
 // in silence; lines of the Sheets the bank does not show are listed too.
@@ -77,6 +78,27 @@ assert.deepEqual(plain(d3.differs.map((x) => [x.row.id, x.op.amount, x.why, x.su
   'same name: surely the same; close amount only: asked');
 assert.deepEqual(plain(d3.missing.map((m) => m.op.merchant)), ['Marie Blachere', 'Orange Sa'], '9,90 is too far from the 6,40 typed: a new line');
 assert.deepEqual(plain(d3.orphans.map((r) => r.id)), ['bread', 'gift'], 'typed, not at the bank; a line dated after the last bank line is not one yet');
+
+// The bank's date rules: a card payment typed in the month it was made, but booked the month after, is found in the
+// previous tab and offered a move to the month of the bank; nothing is added twice.
+{
+  const data4 = { categories: [], months: [
+    { ym: '2026-10', tab: 'Octobre 2026', opening: 0, rows: [row('2026-10-30', 'Pharmacie', 27.36, 'Santé', 'Pharmacie', { id: 'pharma', means: 'CB du 30/10' }),
+      row('2026-10-29', 'Plein', 60, 'Transport', 'Carburant', { id: 'fuel', means: 'CB du 29/10' })] },
+    { ym: '2026-11', tab: 'Novembre 2026', opening: 0, rows: [row('2026-11-03', 'Auchan', 50, 'Alimentation', 'Courses', { id: 'nov' })] }] };
+  const bank = [op('2026-11-02', '2026-10-30', 'ACHAT CB SAINT GEORGES 30.10.26 CARTE NUMERO 514', 27.36),
+    op('2026-11-03', '2026-10-29', 'ACHAT CB RELAIS 29.10.26 CARTE NUMERO 514', 60.4),
+    op('2026-11-04', '2026-11-03', 'ACHAT CB AUCHAN.FR 03.11.26 CARTE NUMERO 337', 50),
+    op('2026-10-30', '2026-10-29', 'ACHAT CB OCTOBRE 29.10.26 CARTE NUMERO 337', 9)];
+  const nov = Bank.reconcile(data4, bank, '2026-11');
+  assert.deepEqual(plain(nov.known.map((k) => k.row.id)), ['pharma', 'nov']);
+  assert.deepEqual(plain(nov.shift.map((x) => [x.row.id, x.from, x.date])), [['pharma', '2026-10', '2026-11-02']], 'typed in October, booked in November');
+  assert.deepEqual(plain(nov.differs.map((x) => [x.row.id, x.date])), [['fuel', '2026-11-03']], 'a probable duplicate is also looked for in the month before');
+  assert.deepEqual([nov.missing.length, nov.skipped], [0, 1], 'the line booked in October is not November\'s');
+  const all = Bank.reconcile(data4, bank);
+  assert.deepEqual(plain(all.shift.map((x) => x.row.id)), ['pharma'], 'same without a month');
+  assert.deepEqual(plain(all.missing.map((m) => [m.op.merchant, m.date])), [['Octobre', '2026-10-30']]);
+}
 
 // Transactions from the bank connection (Enable Banking): same shape as the CSV lines; pending ones are left out.
 const api = Bank.fromApi([

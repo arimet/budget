@@ -46,50 +46,61 @@ function words(s) { return Calc.norm(s).split(' ').filter(function (w) { return 
 // Bank lines against the Sheets, in passes so a loose match never takes a row an exact one needs:
 // known (same amount, close date), differs (probably the same line typed differently: same name, or only a close
 // amount, which the app asks about), toPass (a forecast that went through), missing; then waiting = forecasts not
-// passed, and orphans = real lines of the Sheets the bank does not show. `ym`: only lines dated in that month, 1st to last day (the others count as skipped).
+// passed, and orphans = real lines of the Sheets the bank does not show.
+// The bank's date rules: a line belongs to the month the bank booked it. `ym` keeps only the lines booked that month
+// (the others count as skipped). A card payment typed the month before is looked for there too, and listed in `shift`
+// (a move to the bank's month is offered); every item carries `date`, the date to write.
 function reconcile(data, ops, ym) {
-  var tabs = {}, used = {}, out = { known: [], differs: [], toPass: [], missing: [], waiting: [], orphans: [], skipped: 0 };
-  data.months.forEach(function (m) { tabs[m.ym] = m; });
+  var tabs = {}, used = {}, out = { known: [], differs: [], shift: [], toPass: [], missing: [], waiting: [], orphans: [], skipped: 0 };
+  var home = {};
+  data.months.forEach(function (m) { tabs[m.ym] = m; m.rows.forEach(function (r) { home[r.id] = m.ym; }); });
   var todo = [], seen = {};
   ops.forEach(function (op) {
-    var m = ym ? (op.date.slice(0, 7) === ym ? tabs[ym] : null) : tabs[op.date.slice(0, 7)] || tabs[op.posted.slice(0, 7)];
+    var booked = tabs[op.posted.slice(0, 7)], made = tabs[op.date.slice(0, 7)];
+    var m = ym ? (op.posted.slice(0, 7) === ym ? booked : null) : booked || made;
     if (!m) { out.skipped++; return; }
     seen[m.ym] = m;
-    todo.push({ op: op, m: m });
+    // Where the line is written: the bank's date when that month has a tab.
+    todo.push({ op: op, m: m, date: booked ? op.posted : op.date, rows: made && made !== m ? m.rows.concat(made.rows) : m.rows });
   });
   var free = function (r) { return !used[r.id]; };
   var near = function (r, op, n) { return days(r.date, op.date) <= n || days(r.date, op.posted) <= n; };
   // `rank`, when given, picks the best candidate (lowest value) instead of the first.
   var pass = function (find, keep, rank) {
     todo = todo.filter(function (t) {
-      var found = t.m.rows.filter(function (x) { return free(x) && find(x, t.op); });
+      var found = t.rows.filter(function (x) { return free(x) && find(x, t.op, t); });
       if (rank) found.sort(function (a, b) { return rank(a, t.op) - rank(b, t.op); });
       var r = found[0];
       if (!r) return true;
-      used[r.id] = 1; keep(t.op, r); return false;
+      used[r.id] = 1; keep(t.op, r, t); return false;
     });
   };
   var signed = function (r) { return r.debit - r.credit; };
   // A typo in the amount: within 1 €, or 3 % for bigger sums (5 € at most).
   var close = function (r, op) { return Math.abs(signed(r) - op.amount) <= Math.min(5, Math.max(1, Math.abs(op.amount) * 0.03)) + 0.005; };
   pass(function (r, op) { return !r.forecast && Math.abs(r.debit - r.credit - op.amount) < 0.005 && near(r, op, 3); },
-    function (op, r) { out.known.push({ op: op, row: r }); });
+    function (op, r, t) {
+      out.known.push({ op: op, row: r });
+      // Typed in another month than the one the bank booked it in: a move is offered.
+      if (home[r.id] !== t.date.slice(0, 7)) out.shift.push({ op: op, row: r, from: home[r.id], date: t.date });
+    });
   pass(function (r, op) {
     var w = words(r.label).filter(function (x) { return x.length >= 3; }), o = words(op.label + ' ' + op.merchant);
     return !r.forecast && near(r, op, 5) && (r.debit - r.credit > 0) === (op.amount > 0) && w.some(function (x) { return o.indexOf(x) >= 0; });
-  }, function (op, r) { out.differs.push({ op: op, row: r, why: 'name', sure: close(r, op) }); });
+  }, function (op, r, t) { out.differs.push({ op: op, row: r, why: 'name', sure: close(r, op), date: t.date }); });
   // Another name but nearly the same amount a few days apart: maybe the same line, typed by hand. Asked, never assumed.
   pass(function (r, op) { return !r.forecast && near(r, op, 4) && (signed(r) > 0) === (op.amount > 0) && close(r, op); },
-    function (op, r) { out.differs.push({ op: op, row: r, why: 'amount', sure: false }); },
+    function (op, r, t) { out.differs.push({ op: op, row: r, why: 'amount', sure: false, date: t.date }); },
     function (r, op) { return Math.abs(signed(r) - op.amount); });
-  pass(function (r, op) {
-    if (!r.forecast || r.envelope || (op.amount > 0 ? !r.debit : !r.credit)) return false;
+  pass(function (r, op, t) {
+    // A forecast only of the month the bank booked the line in.
+    if (!r.forecast || r.envelope || home[r.id] !== t.m.ym || (op.amount > 0 ? !r.debit : !r.credit)) return false;
     var w = words(r.label), o = words(op.label);
     return (w.length && w.every(function (x) { return o.indexOf(x) >= 0; })) || Math.abs((r.debit || r.credit) - Math.abs(op.amount)) < 0.01;
-  }, function (op, r) { out.toPass.push({ op: op, forecast: r }); });
+  }, function (op, r, t) { out.toPass.push({ op: op, forecast: r, date: t.date }); });
   todo.forEach(function (t) {
     var s = Calc.suggest(data, t.op.merchant.replace(/\./g, '')) || { cat: 'Divers', sub: 'À classer' };
-    out.missing.push({ op: t.op, cat: s.cat, sub: s.sub });
+    out.missing.push({ op: t.op, cat: s.cat, sub: s.sub, date: t.date });
   });
   (ym ? [tabs[ym]].filter(Boolean) : Object.keys(seen).map(function (k) { return seen[k]; })).forEach(function (m) {
     m.rows.forEach(function (r) { if (r.forecast && !r.envelope && free(r)) out.waiting.push(r); });

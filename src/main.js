@@ -703,7 +703,7 @@ function viewBank() {
   };
   var out = topbar(S.impTitle, '<button type="button" class="iconbtn" data-action="bank-close" aria-label="Fermer">' + icon('close') + '</button>');
   out += '<p class="hint">' + r.known.length + ' identique' + (r.known.length > 1 ? 's' : '') + ' · ' + r.differs.length + ' à vérifier · ' +
-    r.missing.length + ' manquante' + (r.missing.length > 1 ? 's' : '') +
+    r.missing.length + ' manquante' + (r.missing.length > 1 ? 's' : '') + (r.shift.length ? ' · ' + r.shift.length + ' à déplacer' : '') +
     (r.skipped ? ' · ' + r.skipped + ' hors du mois laissée' + (r.skipped > 1 ? 's' : '') + ' de côté' : '') + '</p>';
   // Probably one operation typed differently (same name, or only a close amount): the app asks, and does nothing without an answer.
   out += section('Peut-être la même opération', 'à toi de dire', r.differs.map(function (x, i) {
@@ -711,7 +711,7 @@ function viewBank() {
     if (x.choice === undefined) x.choice = x.sure ? 'same' : '';
     var s = Calc.suggest(S.data, x.op.merchant.replace(/\./g, '')) || { cat: 'Divers', sub: 'À classer' };
     return '<li class="imp dup"><span class="txt"><b>' + esc(w.label) + '</b><small>Sheets : ' + money2(amt) + ' le ' + shortDate(w.date) +
-      '<br>Banque : <b>' + money2(x.op.amount) + '</b> le ' + shortDate(x.op.date) + ' · ' + esc(x.op.merchant) + '</small>' +
+      '<br>Banque : <b>' + money2(x.op.amount) + '</b> le ' + shortDate(x.date) + ' · ' + esc(x.op.merchant) + '</small>' +
       '<small class="impnote">' + (x.why === 'amount' ? 'Montant presque identique, à quelques jours près.' : 'Même nom, montant ou date différents.') + '</small></span>' +
       '<div class="seg wide">' + [['same', 'Même opération'], ['new', 'Deux opérations']].map(function (c) {
         return '<button type="button" data-action="dup-choice" data-i="' + i + '" data-choice="' + c[0] + '" aria-pressed="' + (x.choice === c[0]) + '">' + c[1] + '</button>';
@@ -720,8 +720,13 @@ function viewBank() {
       '<select class="input impcat" data-dupcat="' + i + '" aria-label="Catégorie">' + catOptions(s.cat, s.sub) + '</select></div></li>';
   }).join('')) + (r.differs.length ? '<p class="hint">Même opération : la ligne du Sheets prend le montant et la date de la banque. Deux opérations : ' +
     'la ligne de la banque est ajoutée. Sans choix, rien ne change.</p>' : '');
+  // The bank's date rules: a line typed in the month of the purchase, booked the month after, moves to the bank's month.
+  out += section('Passées un autre mois', 'à déplacer', r.shift.map(function (x, i) {
+    var w = x.row;
+    return line('shift', i, w.label, 'Saisie le ' + shortDate(w.date) + ' · ' + money2(w.debit - w.credit) + '<br>Passée en banque le <b>' + shortDate(x.date) + '</b>', '', true);
+  }).join('')) + (r.shift.length ? '<p class="hint">Cochée, la ligne part dans le mois où la banque l\'a comptée, à la date de la banque. Elle garde sa mention « CB du… ».</p>' : '');
   out += section('Opérations manquantes', 'à ajouter', r.missing.map(function (m, i) {
-    return line('add', i, m.op.merchant, shortDate(m.op.date) + ' · ' + money2(m.op.amount),
+    return line('add', i, m.op.merchant, shortDate(m.date) + ' · ' + money2(m.op.amount),
       '<input class="input implabel" data-implabel="' + i + '" value="' + esc(m.op.merchant) + '" aria-label="Libellé" autocomplete="off">' +
       '<select class="input impcat" data-impcat="' + i + '" aria-label="Catégorie">' + catOptions(m.cat, m.sub) + '</select>', true);
   }).join(''));
@@ -729,7 +734,7 @@ function viewBank() {
     return '<li class="imp waiting"><span class="txt"><b>' + esc(f.label) + '</b><small>Pas encore passée · ' + money2(f.debit - f.credit) + '</small></span></li>';
   }).join('');
   out += section('À venir', r.toPass.length + ' passée' + (r.toPass.length > 1 ? 's' : '') + ' · ' + r.waiting.length + ' pas encore', r.toPass.map(function (p, i) {
-    return line('pass', i, p.forecast.label, 'Passée le ' + shortDate(p.op.date) + ' · ' + money2(p.op.amount) +
+    return line('pass', i, p.forecast.label, 'Passée le ' + shortDate(p.date) + ' · ' + money2(p.op.amount) +
       (Math.abs(p.op.amount) !== (p.forecast.debit || p.forecast.credit) ? ' (prévu ' + money(p.forecast.debit || p.forecast.credit) + ')' : ''), '', true);
   }).join('') + waiting);
   if (r.known.length) out += '<details class="acc"><summary><span class="acc-t">Identiques</span><span class="acc-h">' + r.known.length + ' déjà dans le Sheets</span>' +
@@ -740,7 +745,7 @@ function viewBank() {
     'un paiement pas encore débité… ou une ligne saisie en double, à supprimer depuis l\'écran Mois.</p><ul class="well">' + r.orphans.map(function (o) {
       return '<li class="kv"><span>' + esc(o.label) + ' <small>' + shortDate(o.date) + '</small></span><b class="num">' + money2(o.debit - o.credit) + '</b></li>';
     }).join('') + '</ul></div></details>';
-  var n = r.differs.length + r.missing.length + r.toPass.length;
+  var n = r.differs.length + r.missing.length + r.toPass.length + r.shift.length;
   return out + '<div class="actions">' + (n ? '<button type="button" class="btn primary" data-action="import-yes">Mettre à jour le Sheets</button>' : '<p class="empty">Tout est à jour.</p>') +
     '<button type="button" class="btn" data-action="bank-close">Fermer</button></div>';
 }
@@ -751,11 +756,11 @@ function importActions() {
   // "Peut-être la même opération": the same one takes the bank's amount and date (it keeps its id), a second one is added.
   r.differs.forEach(function (x, i) {
     var w = x.row;
-    if (x.choice === 'same') out.push({ type: 'fix', expense: { id: w.id, date: x.op.date, amount: x.op.amount, cat: w.cat, sub: w.sub, label: w.label, who: w.who,
+    if (x.choice === 'same') out.push({ type: 'fix', expense: { id: w.id, date: x.date, amount: x.op.amount, cat: w.cat, sub: w.sub, label: w.label, who: w.who,
       means: /^CB/.test(w.means) ? cbOf(x.op) : w.means } });
     else if (x.choice === 'new') {
       var dc = $('[data-dupcat="' + i + '"]').value.split('|');
-      out.push({ type: 'add', expense: { date: x.op.date, amount: x.op.amount, cat: dc[0], sub: dc[1],
+      out.push({ type: 'add', expense: { date: x.date, amount: x.op.amount, cat: dc[0], sub: dc[1],
         label: $('[data-duplabel="' + i + '"]').value.trim() || x.op.merchant, who: [S.data.people[0]], means: x.op.card ? cbOf(x.op) : '' } });
     }
   });
@@ -764,10 +769,14 @@ function importActions() {
     var k = box.dataset.imp.split(':'), i = +k[1];
     if (k[0] === 'pass') {
       var p = r.toPass[i];
-      out.push({ type: 'pass', id: p.forecast.id, amount: Math.abs(p.op.amount), date: p.op.date });
+      out.push({ type: 'pass', id: p.forecast.id, amount: Math.abs(p.op.amount), date: p.date });
+    } else if (k[0] === 'shift') {
+      // Same line, same amount: only its date (and so its month) follows the bank.
+      var sx = r.shift[i], sw = sx.row;
+      out.push({ type: 'fix', expense: { id: sw.id, date: sx.date, amount: sw.debit - sw.credit, cat: sw.cat, sub: sw.sub, label: sw.label, who: sw.who, means: sw.means } });
     } else {
       var m = r.missing[i], cs = $('[data-impcat="' + i + '"]').value.split('|');
-      out.push({ type: 'add', expense: { date: m.op.date, amount: m.op.amount, cat: cs[0], sub: cs[1],
+      out.push({ type: 'add', expense: { date: m.date, amount: m.op.amount, cat: cs[0], sub: cs[1],
         label: $('[data-implabel="' + i + '"]').value.trim() || m.op.merchant, who: [S.data.people[0]],
         means: m.op.card ? 'CB du ' + m.op.date.slice(8) + '/' + m.op.date.slice(5, 7) : '' } });
     }

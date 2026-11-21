@@ -248,6 +248,19 @@ const env = (b, name, key) => loadCode(b).readMonth(b.getSheetByName(name)).rows
   assert.throws(() => code.saveForecast({ id: 'a2', ym: '2026-11', amount: 5, label: 'x', cat: 'Loisirs', sub: 'Sport', who: ['Foyer'] }), /déjà passée/);
 }
 {
+  // The bank's date rules: a line typed at the end of a month and booked the month after moves to that month's tab,
+  // keeps its id and its "CB du" mention, and both months' balances follow.
+  const b = book(), code = loadCode(b), nov = b.getSheetByName('Novembre 2026');
+  code.prepareMonth('2026-12');
+  const id = code.saveExpense({ date: '2026-11-30', amount: 27.36, cat: 'Santé', sub: 'Pharmacie', label: 'Pharmacie', who: ['Foyer'], means: 'CB du 30/11' }).saved;
+  const novEnd = end(b, 'Novembre 2026');
+  const data = code.importBank([{ type: 'fix', expense: { id, date: '2026-12-02', amount: 27.36, cat: 'Santé', sub: 'Pharmacie', label: 'Pharmacie', who: ['Foyer'], means: 'CB du 30/11' } }]);
+  const find = (ym) => data.months.find((m) => m.ym === ym).rows.find((r) => r.id === id);
+  assert.equal(find('2026-11'), undefined, 'gone from November');
+  assert.deepEqual([find('2026-12').date, find('2026-12').means, find('2026-12').debit, find('2026-12').forecast], ['2026-12-02', 'CB du 30/11', 27.36, false]);
+  assert.equal(end(b, 'Novembre 2026'), Math.round((novEnd + 27.36) * 100) / 100, 'November no longer counts it');
+}
+{
   // The budget plan is read from its own tab: spending lines with the categories that feed them, and transfers.
   const b = book();
   assert.deepEqual(plain(loadCode(b).getData(true).plan), [], 'no tab: no plan');

@@ -55,6 +55,7 @@ function sample(ym) {
   add(17, 'Auchan', 70 + rnd() * 80, 'Alimentation', 'Courses');
   add(20, 'Kiabi', 20 + rnd() * 60, 'Shopping', 'Vêtements & chaussures', 'Camille');
   add(24, 'Lidl', 70 + rnd() * 80, 'Alimentation', 'Courses');
+  add(27, 'Pharmacie', 27.36, 'Santé', 'Pharmacie');
   add(28, 'Virement employeur A', -2500, 'Revenus', 'Salaires', 'Foyer', '');
   add(30, 'Virement employeur B', -1300, 'Revenus', 'Salaires', 'Foyer', '');
   return rows;
@@ -77,6 +78,9 @@ const api = { getData: code.getData, saveExpense: code.saveExpense, deleteExpens
   // The bank connection, connected for 3 months, with two lines of this month.
   bankConnect: () => ({ url: './' }),
   bankTransactions: () => ({ calls: 2, transactions: [
+    // Paid at the end of last month, booked this month: the app offers to move the line.
+    { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '27.36', currency: 'EUR' }, booking_date: today.slice(0, 8) + '02',
+      remittance_information: ['ACHAT CB PHARMACIE 27.' + ymOf(1).slice(5) + '.' + ymOf(1).slice(2, 4)] },
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '6.60', currency: 'EUR' }, booking_date: today.slice(0, 8) + '03',
       remittance_information: ['ACHAT CB MARIE BLACHERE 02.' + today.slice(5, 7) + '.' + today.slice(2, 4)] },
     { status: 'BOOK', credit_debit_indicator: 'DBIT', transaction_amount: { amount: '82.12', currency: 'EUR' }, booking_date: today.slice(0, 8) + '02',
